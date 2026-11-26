@@ -1,0 +1,106 @@
+openapi: 3.1.0
+info:
+  title: CampTech Oyo API
+  version: 0.1.0
+  description: Initial contract for public information and operational coordination. Planned only; endpoints are not deployed.
+servers:
+  - url: https://api.example.invalid
+    description: Placeholder; replace when production API is deployed.
+paths:
+  /v1/public/updates:
+    get:
+      summary: List published public updates
+      parameters:
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: topic
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Paginated published updates
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PublicUpdate'
+                  nextCursor:
+                    type: [string, 'null']
+  /v1/monitoring/summary:
+    get:
+      summary: Return aggregate public-source monitoring summary
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Aggregate counts by topic and source; no individual political profiles
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  generatedAt: { type: string, format: date-time }
+                  totals:
+                    type: object
+                    additionalProperties: { type: integer, minimum: 0 }
+                  sourceBreakdown:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        source: { type: string }
+                        count: { type: integer, minimum: 0 }
+  /v1/operations/projects:
+    get:
+      summary: List projects visible to the authenticated user
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Project list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string }
+                    name: { type: string }
+                    status: { type: string, enum: [planned, active, blocked, completed, archived] }
+                    updatedAt: { type: string, format: date-time }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    PublicUpdate:
+      type: object
+      required: [id, title, publishedAt, sourceUrl]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        summary: { type: string }
+        topic: { type: string }
+        publishedAt: { type: string, format: date-time }
+        sourceName: { type: string }
+        sourceUrl: { type: string, format: uri }
+        verificationStatus: { type: string, enum: [unreviewed, reported, corroborated, verified, corrected] }
