@@ -1,0 +1,20 @@
+{
+  "name": "camptech-oyo-api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Public information and operations API for CampTech Oyo",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "migrate": "node src/migrate.js",
+    "check": "node --check src/server.js && node --check src/migrate.js"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "pg": "^8.13.1"
+  }
+}
