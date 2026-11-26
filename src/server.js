@@ -6,11 +6,10 @@ const { Pool } = require("pg");
 
 const app = express();
 const port = Number(process.env.PORT || 8080);
-const databaseUrl = process.env.DATABASE_URL;
 const adminToken = process.env.ADMIN_API_TOKEN;
-const allowedOrigins = (process.env.CORS_ORIGIN || "").split(",").map(x => x.trim()).filter(Boolean);
-const pool = databaseUrl ? new Pool({
-  connectionString: databaseUrl,
+const origins = (process.env.CORS_ORIGIN || "").split(",").map(v => v.trim()).filter(Boolean);
+const pool = process.env.DATABASE_URL ? new Pool({
+  connectionString: process.env.DATABASE_URL,
   ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false },
   max: Number(process.env.PG_POOL_MAX || 10),
   idleTimeoutMillis: 30000,
@@ -19,47 +18,46 @@ const pool = databaseUrl ? new Pool({
 
 app.disable("x-powered-by");
 app.use(helmet());
-app.use(cors({
-  origin(origin, callback) {
-    if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) return callback(null, true);
-    return callback(new Error("Origin not allowed"));
-  },
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
-}));
+app.use(cors({ origin(origin, cb) {
+  if (!origin || origins.length === 0 || origins.includes(origin)) return cb(null, true);
+  return cb(new Error("Origin not allowed"));
+}, methods: ["GET", "POST", "OPTIONS"], allowedHeaders: ["Content-Type", "Authorization"] }));
 app.use(express.json({ limit: "64kb" }));
-app.use("/v1", rateLimit({ windowMs: 60 * 1000, limit: 120, standardHeaders: "draft-7", legacyHeaders: false }));
+app.use("/v1", rateLimit({ windowMs: 60000, limit: 120, standardHeaders: "draft-7", legacyHeaders: false }));
 
-function requireDb(req, res, next) {
+function dbRequired(req, res, next) {
   if (!pool) return res.status(503).json({ error: "database_not_configured" });
   next();
 }
-function requireAdmin(req, res, next) {
+function adminRequired(req, res, next) {
   if (!adminToken) return res.status(503).json({ error: "admin_auth_not_configured" });
-  const supplied = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-  if (supplied.length !== adminToken.length || !require("crypto").timingSafeEqual(Buffer.from(supplied), Buffer.from(adminToken))) {
-    return res.status(401).json({ error: "unauthorized" });
-  }
+  const token = (req.get("authorization") || "").replace(/^Bearer\s+/i, "");
+  const a = Buffer.from(token), b = Buffer.from(adminToken);
+  if (a.length !== b.length || !require("node:crypto").timingSafeEqual(a, b)) return res.status(401).json({ error: "unauthorized" });
   next();
 }
-function validHttpUrl(value) {
-  try { const u = new URL(value); return u.protocol === "https:" || u.protocol === "http:"; } catch { return false; }
+function validUrl(value) {
+  try { const u = new URL(value); return ["http:", "https:"].includes(u.protocol); } catch { return false; }
 }
 
 app.get("/health", async (req, res) => {
   if (!pool) return res.status(503).json({ status: "degraded", database: "not_configured" });
-  try { await pool.query("SELECT 1"); return res.json({ status: "ok", database: "connected" }); }
-  catch { return res.status(503).json({ status: "degraded", database: "unavailable" }); }
+  try { await pool.query("SELECT 1"); res.json({ status: "ok", database: "connected" }); }
+  catch { res.status(503).json({ status: "degraded", database: "unavailable" }); }
 });
 
-app.get("/v1/public/updates", requireDb, async (req, res, next) => {
+app.get("/v1/public/updates", dbRequired, async (req, res, next) => {
   try {
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 20, 1), 100);
-    const q = String(req.query.q || "").trim().slice(0, 120);
+    const q = String(req.query.q || "").trim().slice(0, 120).replace(/[%_]/g, " ");
     const topic = String(req.query.topic || "").trim().slice(0, 80);
     const values = [];
     const where = ["status = 'published'"];
-    if (q) { values.push("%" + q.replace(/[\\%_]/g, "\\$&") + "%"); where.push("(title ILIKE $" + values.length + " ESCAPE '\\\\' OR summary ILIKE $" + values.length + " ESCAPE '\\\\' OR topic ILIKE $" + values.length + " ESCAPE '\\\\' OR source_name ILIKE $" + values.length + " ESCAPE '\\\\')"); }
+    if (q) {
+      values.push("%" + q + "%");
+      const n = values.length;
+      where.push("(title ILIKE $" + n + " OR summary ILIKE $" + n + " OR topic ILIKE $" + n + " OR source_name ILIKE $" + n + ")");
+    }
     if (topic) { values.push(topic); where.push("topic = $" + values.length); }
     values.push(limit);
     const result = await pool.query(
@@ -71,9 +69,9 @@ app.get("/v1/public/updates", requireDb, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.get("/v1/monitoring/summary", requireDb, async (req, res, next) => {
+app.get("/v1/monitoring/summary", dbRequired, async (req, res, next) => {
   try {
-    const from = req.query.from, to = req.query.to;
+    const { from, to } = req.query;
     if (!from || !to || Number.isNaN(Date.parse(from)) || Number.isNaN(Date.parse(to)) || Date.parse(from) >= Date.parse(to)) {
       return res.status(400).json({ error: "valid_from_and_to_required" });
     }
@@ -85,25 +83,21 @@ app.get("/v1/monitoring/summary", requireDb, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.get("/v1/operations/projects", requireDb, async (req, res, next) => {
+app.get("/v1/operations/projects", dbRequired, async (req, res, next) => {
   try {
-    const result = await pool.query(
-      "SELECT id, name, description, status, updated_at AS \"updatedAt\" FROM projects WHERE visibility = 'public' ORDER BY updated_at DESC LIMIT 100"
-    );
+    const result = await pool.query("SELECT id, name, description, status, updated_at AS \"updatedAt\" FROM projects WHERE visibility = 'public' ORDER BY updated_at DESC LIMIT 100");
     res.set("Cache-Control", "public, max-age=30, stale-while-revalidate=120");
     res.json({ items: result.rows });
   } catch (error) { next(error); }
 });
 
-// Admin ingestion endpoint. Keep the token in the hosting provider's secret store.
-app.post("/v1/admin/updates", requireDb, requireAdmin, async (req, res, next) => {
+app.post("/v1/admin/updates", dbRequired, adminRequired, async (req, res, next) => {
   try {
     const { title, summary = "", topic = "General", publishedAt, sourceName, sourceUrl, verificationStatus = "unreviewed" } = req.body || {};
-    const allowedStatuses = ["unreviewed", "reported", "corroborated", "verified", "corrected"];
+    const statuses = ["unreviewed", "reported", "corroborated", "verified", "corrected"];
     if (typeof title !== "string" || title.trim().length < 3 || title.length > 240 ||
         typeof publishedAt !== "string" || Number.isNaN(Date.parse(publishedAt)) ||
-        typeof sourceUrl !== "string" || !validHttpUrl(sourceUrl) ||
-        !allowedStatuses.includes(verificationStatus)) {
+        typeof sourceUrl !== "string" || !validUrl(sourceUrl) || !statuses.includes(verificationStatus)) {
       return res.status(400).json({ error: "invalid_update_payload" });
     }
     const result = await pool.query(
@@ -121,7 +115,6 @@ app.use((error, req, res, next) => {
   console.error(JSON.stringify({ level: "error", message: error.message, path: req.path }));
   res.status(500).json({ error: "internal_server_error" });
 });
-
 const server = app.listen(port, () => console.log(JSON.stringify({ level: "info", message: "CampTech API listening", port })));
 async function shutdown() {
   server.close(async () => { if (pool) await pool.end(); process.exit(0); });
