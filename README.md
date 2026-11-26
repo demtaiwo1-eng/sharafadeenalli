@@ -1,33 +1,42 @@
-# CampTech Oyo — platform backend
+# CampTech Oyo — backend API
 
-This repository is the planned backend and service specification for CampTech Oyo. It is not yet a deployed API.
+This repository now contains an initial Node.js/PostgreSQL API foundation. It is source code, not a deployed or production-hardened service yet.
 
-## Service domains
-- **Public content:** announcements, public updates, source attribution and correction history.
-- **Media monitoring:** public-source collection, keyword matching, deduplication, source classification and aggregate trends.
-- **Operations:** projects, tasks, milestones, event logistics and stakeholder organisations.
-- **Field reports:** structured observations with timestamps, location granularity, review state and access controls.
-- **Reporting:** aggregate dashboards and exportable reports.
-- **Identity and audit:** authentication, role-based permissions, consent and immutable audit events.
+## Included
+- Express API with Helmet security headers, CORS allow-list support and request rate limiting.
+- PostgreSQL connection pool and initial schema migration.
+- Public, published-update listing and keyword search.
+- Aggregate topic/source monitoring summary.
+- Publicly visible project listing.
+- Token-protected admin ingestion endpoint for sourced public updates.
+- Dockerfile and environment template.
 
-## Suggested implementation sequence
-1. Agree data model, roles, retention rules and API contracts.
-2. Implement authentication, audit trail and PostgreSQL schema.
-3. Implement public content and operations APIs.
-4. Add compliant public-source ingestion through queued workers.
-5. Add field reporting, review workflow and aggregate reports.
-6. Add CDN caching, rate limiting, observability and load testing.
-7. Deploy to multi-zone autoscaling infrastructure and conduct independent security review.
+## API routes
+- `GET /health` — API/database readiness.
+- `GET /v1/public/updates?limit=30&q=term` — published records, source links and verification labels.
+- `GET /v1/monitoring/summary?from=ISO_DATE&to=ISO_DATE` — aggregate source/topic counts.
+- `GET /v1/operations/projects` — public projects only.
+- `POST /v1/admin/updates` — protected ingestion endpoint; requires `Authorization: Bearer <ADMIN_API_TOKEN>`.
 
-## Scale design
-Use a CDN/edge cache for public reads, stateless horizontally scalable API instances, a managed PostgreSQL cluster with pooling and read replicas, object storage for media, and queue-backed workers for ingestion and report generation. Do not make every visitor query the primary database. Use bounded pagination, cache keys, request budgets and back-pressure.
+## Deploy and configure
+1. Provision a managed PostgreSQL database (Neon is suitable for an initial managed database).
+2. Deploy this repository as a Node 20 web service or Docker service on a host that supports persistent server processes.
+3. Set environment variables from `.env.example` in the host's secret/configuration panel. Never commit actual secrets.
+4. Set `CORS_ORIGIN` to the exact website origin, for example `https://demtaiwo1-eng.github.io` (origin only; no path).
+5. Set a long random `ADMIN_API_TOKEN` in the host secret store.
+6. Run `npm install`, then `npm run migrate`, then `npm start`.
+7. Confirm `/health` returns `200` and `database: connected`.
+8. Set `API_BASE_URL` in the website repository's `config.js` to the deployed API origin.
 
-Before claiming support for one million concurrent users, define and load-test explicit targets for requests/second, active connections, write throughput, p95/p99 latency, error rate, geographic mix and recovery time. No architecture can honestly promise uninterrupted service without tested capacity and operational budgets.
+## Database migration
+`npm run migrate` applies `migrations/001_initial.sql`. It creates public update and project tables with indexes. No production data is seeded.
 
-## Trust, privacy and compliance
-- Use public and authorised data sources only; respect source terms and applicable Nigerian law.
-- Do not evade authentication, paywalls, robots restrictions or rate limits.
-- Preserve provenance and collection timestamps; mark unverified claims as unverified.
-- Use aggregate public-topic analysis. Do not infer or store individuals' political opinions, build voter profiles, or target political persuasion to individuals.
-- Minimise personal data, restrict field-level access, encrypt sensitive records and define deletion/retention policies.
-- Store credentials in the hosting provider's secret manager, never in Git.
+## Important limitations before public launch
+- Field reports currently save as drafts in the submitting browser only. They are not uploaded or shared. A proper authenticated submission workflow, roles, moderation and audit log must be added before enabling server-side field submissions.
+- Admin token ingestion is a bootstrap mechanism, not a complete staff identity system. Replace it with managed authentication, roles, rotation and audit records before multiple staff use it.
+- The included in-process rate limiter is per API instance. Use a shared edge/WAF or distributed limiter for multi-instance production.
+- Add queue-backed source collection, observability, backups/PITR, automated tests, security review and load testing before production scale.
+- No one-million-concurrent-user capacity claim is made. That requires an explicit traffic model, CDN, autoscaling, pooled database access and measured load tests.
+
+## Data integrity and safety
+Use public and authorised sources only. Preserve the original source URL and date. Clearly distinguish reported, corroborated and verified information. Do not profile individuals' political opinions, infer voter preferences, or target political persuasion to individuals. Do not place personal secrets in source control.
