@@ -61,7 +61,8 @@ async function notifyPushSubscribers(post) {
     }
   }));
 }
-\nfunction adminRequired(req, res, next) {
+
+function adminRequired(req, res, next) {
   if (!adminToken) return res.status(503).json({ error: "admin_auth_not_configured" });
   const token = (req.get("authorization") || "").replace(/^Bearer\s+/i, "");
   const a = Buffer.from(token), b = Buffer.from(adminToken);
@@ -119,7 +120,11 @@ async function storeSocialPost({ platform, externalId, postUrl, authorHandle, po
     "INSERT INTO social_posts (platform, external_id, post_url, author_handle, post_text, published_at, matched_hashtags) VALUES ($1,$2,$3,$4,$5,$6,$7::TEXT[]) ON CONFLICT DO NOTHING RETURNING id",
     [platform, externalId, postUrl, String(authorHandle || "").slice(0,160), postText, publishedAt, matchedHashtags]
   );
-  if (result.rowCount === 1) {\n    await indexPostTerms(result.rows[0].id, platform, postText);\n    void notifyPushSubscribers({ postText, postUrl });\n  }\n  return result.rows[0]?.id || null;
+  if (result.rowCount === 1) {
+    await indexPostTerms(result.rows[0].id, platform, postText);
+    void notifyPushSubscribers({ postText, postUrl });
+  }
+  return result.rows[0]?.id || null;
 }
 let keywordBackfillBusy = false;
 async function backfillUnindexedPostTerms() {
