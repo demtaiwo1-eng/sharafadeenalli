@@ -85,8 +85,8 @@ async function indexPostTerms(postId, platform, text) {
     }
   }
 }
-async function storeSocialPost({ platform, externalId, postUrl, authorHandle, postText, publishedAt }) {
-  if (!exactSarafadeenTag.test(postText || "") || !postUrl || !publishedAt) return null;
+async function storeSocialPost({ platform, externalId, postUrl, authorHandle, postText, publishedAt, queryMatched = false }) {
+  if ((!exactSarafadeenTag.test(postText || "") && !queryMatched) || !postUrl || !publishedAt) return null;
   const matchedHashtags = [...String(postText).matchAll(/(^|[^\p{L}\p{N}_])(#[\p{L}\p{N}_]{2,100})/gu)].map(match => match[2].toLowerCase());
   const result = await pool.query(
     "INSERT INTO social_posts (platform, external_id, post_url, author_handle, post_text, published_at, matched_hashtags) VALUES ($1,$2,$3,$4,$5,$6,$7::TEXT[]) ON CONFLICT DO NOTHING RETURNING id",
@@ -195,7 +195,7 @@ async function runConfiguredAdapter(name) {
       if(!item.url || !validUrl(item.url) || !item.publishedAt || Number.isNaN(Date.parse(item.publishedAt))) continue;
       const rootId=await storeSocialPost({
         platform:name, externalId:String(item.id || item.url).slice(0,240), postUrl:item.url,
-        authorHandle:item.author || "", postText:item.text || "", publishedAt:item.publishedAt
+        authorHandle:item.author || "", postText:item.text || "", publishedAt:item.publishedAt, queryMatched: item.queryMatched === true
       });
       if(rootId) seen++;
       if(rootId) for(const reply of item.replies || []) {
@@ -217,7 +217,7 @@ async function runConfiguredAdapter(name) {
 }
 async function syncConfiguredAdapters() {
   const results=[];
-  for(const name of ["reddit","youtube","mastodon","news_rss"]) results.push(await runConfiguredAdapter(name));
+  for(const name of ["reddit","youtube","mastodon","news_rss","gdelt"]) results.push(await runConfiguredAdapter(name));
   return results;
 }
 
