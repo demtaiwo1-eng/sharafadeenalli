@@ -392,6 +392,24 @@ app.get("/v1/admin/monitoring/collection-runs", dbRequired, adminRequired, async
   } catch(error){next(error);}
 });
 
+app.get("/v1/monitoring/coverage", dbRequired, async (req,res,next) => {
+  try {
+    const result=await pool.query(
+      "SELECT DISTINCT ON (platform) platform, collection_type, started_at, finished_at, status, posts_seen, replies_seen, errors_count FROM collection_runs ORDER BY platform, started_at DESC"
+    );
+    res.set("Cache-Control","no-store");
+    res.json({
+      providers:result.rows.map(row=>({
+        platform:row.platform, collectionType:row.collection_type, lastStartedAt:row.started_at,
+        lastFinishedAt:row.finished_at, status:row.status, postsSeen:row.posts_seen,
+        repliesSeen:row.replies_seen, errors:row.errors_count
+      })),
+      note:"Coverage reflects the latest recorded run for each configured adapter, not proof of exhaustive platform coverage.",
+      generatedAt:new Date().toISOString()
+    });
+  } catch(error){next(error);}
+});
+
 app.get("/v1/monitoring/keywords", dbRequired, async (req, res, next) => {
   try {
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 40, 1), 100);
