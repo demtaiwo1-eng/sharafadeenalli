@@ -103,7 +103,7 @@ app.get("/v1/monitoring/hashtag", dbRequired, async (req, res, next) => {
 app.post("/v1/admin/social-posts", dbRequired, adminRequired, async (req, res, next) => {
   try {
     const { platform, externalId, postUrl, authorHandle = "", postText, publishedAt } = req.body || {};
-    const exactTag = /(^|[^\\p{L}\\p{N}_])#sarafadeen(?![\\p{L}\\p{N}_])/iu;
+    const exactTag = /(^|[^\p{L}\p{N}_])#sarafadeen(?![\p{L}\p{N}_])/iu;
     if (typeof platform !== "string" || !/^[a-z0-9_-]{2,40}$/i.test(platform) ||
         typeof externalId !== "string" || externalId.length < 1 || externalId.length > 240 ||
         typeof postUrl !== "string" || !validUrl(postUrl) ||
@@ -118,7 +118,8 @@ app.post("/v1/admin/social-posts", dbRequired, adminRequired, async (req, res, n
     res.status(result.rowCount ? 201 : 200).json({ accepted: result.rowCount === 1, duplicate: result.rowCount === 0 });
   } catch (error) { next(error); }
 });
-\napp.get("/v1/operations/projects", dbRequired, async (req, res, next) => {
+
+app.get("/v1/operations/projects", dbRequired, async (req, res, next) => {
   try {
     const result = await pool.query("SELECT id, name, description, status, updated_at AS \"updatedAt\" FROM projects WHERE visibility = 'public' ORDER BY updated_at DESC LIMIT 100");
     res.set("Cache-Control", "public, max-age=30, stale-while-revalidate=120");
