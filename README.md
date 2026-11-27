@@ -15,8 +15,20 @@ This repository now contains an initial Node.js/PostgreSQL API foundation. It is
 - `GET /health` — API/database readiness.
 - `GET /v1/public/updates?limit=30&q=term` — published records, source links and verification labels.
 - `GET /v1/monitoring/summary?from=ISO_DATE&to=ISO_DATE` — aggregate source/topic counts.
+- `GET /v1/integrations/catalog` — supported platform/provider catalogue, capabilities, access notes and whether required environment variables are configured.
+- `GET /v1/admin/integrations/status` — authenticated integration configuration status; never returns secret values.
 - `GET /v1/operations/projects` — public projects only.
 - `POST /v1/admin/updates` — protected ingestion endpoint; requires `Authorization: Bearer <ADMIN_API_TOKEN>`.
+
+## Platform API integration catalogue
+
+The API exposes a catalogue covering X, Bluesky, Reddit, YouTube, Facebook, Instagram, Threads, TikTok, LinkedIn, Mastodon, Telegram, Discord, public news/RSS feeds, government/election open data, and optional unified providers (Desearch, TagX ListenX and Social Fetch).
+
+Configure credentials only in the Render service's secret environment settings (or another server-side secret manager). Never put API keys in the GitHub Pages frontend, browser local storage, source control, or public API responses. The catalogue's `configured` flag only checks whether required environment variables exist; it does not validate a token, confirm platform approval, or guarantee a data entitlement.
+
+See `src/integrations/catalog.js` for each connector's environment variable names, supported collection capabilities, access requirements and official/provider documentation links. Platform APIs differ: some expose public search and nested replies, while others only expose content from authorised accounts, approved research projects, or managed Pages. Collection must stay within each provider's permissions, terms, quotas and retention rules. A connector should be marked connected only after an authenticated health/test request succeeds.
+
+The catalogue is a foundation for a future administrator-facing connection picker. It does not yet implement OAuth handshakes, token validation, scheduled collection, reply-tree ingestion, or a frontend settings screen.
 
 ## Deploy and configure
 1. Provision a managed PostgreSQL database (Neon is suitable for an initial managed database).
