@@ -92,6 +92,21 @@ async function storeSocialPost({ platform, externalId, postUrl, authorHandle, po
   if (result.rowCount === 1) await indexPostTerms(result.rows[0].id, platform, postText);
   return result.rows[0]?.id || null;
 }
+let keywordBackfillBusy = false;
+async function backfillUnindexedPostTerms() {
+  if (!pool || keywordBackfillBusy) return;
+  keywordBackfillBusy = true;
+  try {
+    const result = await pool.query(
+      "SELECT p.id, p.platform, p.post_text FROM social_posts p WHERE NOT EXISTS (SELECT 1 FROM post_keywords k WHERE k.source_post_id=p.id) ORDER BY p.published_at DESC LIMIT 10"
+    );
+    for (const post of result.rows) await indexPostTerms(post.id, post.platform, post.post_text);
+  } catch (error) {
+    console.warn(JSON.stringify({ level: "warn", source: "keyword_backfill", message: error.message }));
+  } finally {
+    keywordBackfillBusy = false;
+  }
+}
 async function storeBlueskyThreadNode(node, rootPostId, parentExternalId, depth) {
   if (!node?.post?.uri || depth > 6) return 0;
   const post = node.post;
@@ -348,7 +363,7 @@ app.use((error, req, res, next) => {
   console.error(JSON.stringify({ level: "error", message: error.message, path: req.path }));
   res.status(500).json({ error: "internal_server_error" });
 });
-const server = app.listen(port, () => { console.log(JSON.stringify({ level: "info", message: "CampTech API listening", port })); setTimeout(syncPublicSources, 1000); setInterval(syncPublicSources, 5000); });
+const server = app.listen(port, () => { console.log(JSON.stringify({ level: "info", message: "CampTech API listening", port })); setTimeout(syncPublicSources, 1000); setInterval(syncPublicSources, 5000); setTimeout(backfillUnindexedPostTerms, 3000); setInterval(backfillUnindexedPostTerms, 30000); });
 async function shutdown() {
   server.close(async () => { if (pool) await pool.end(); process.exit(0); });
   setTimeout(() => process.exit(1), 10000).unref();
