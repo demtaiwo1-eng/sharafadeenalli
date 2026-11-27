@@ -1,5 +1,3 @@
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
 CREATE TABLE IF NOT EXISTS public_updates (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title VARCHAR(240) NOT NULL,
