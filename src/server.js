@@ -3,6 +3,7 @@ const cors = require("cors");
 const helmet = require("helmet");
 const { rateLimit } = require("express-rate-limit");
 const { Pool } = require("pg");
+const { getIntegrationCatalog } = require("./integrations/catalog");
 
 const app = express();
 const port = Number(process.env.PORT || 8080);
@@ -106,6 +107,23 @@ async function syncPublicSources() {
   }
   sourceSyncBusy = false;
 }
+
+app.get("/v1/integrations/catalog", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.json({
+    generatedAt: new Date().toISOString(),
+    note: "Configured means required environment variables exist; it does not mean credentials have been validated or that the platform has granted access.",
+    integrations: getIntegrationCatalog()
+  });
+});
+
+app.get("/v1/admin/integrations/status", adminRequired, (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.json({
+    generatedAt: new Date().toISOString(),
+    integrations: getIntegrationCatalog()
+  });
+});
 
 app.get("/health", async (req, res) => {
   if (!pool) return res.status(503).json({ status: "degraded", database: "not_configured" });
