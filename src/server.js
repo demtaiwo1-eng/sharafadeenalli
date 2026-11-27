@@ -3,6 +3,7 @@ const cors = require("cors");
 const helmet = require("helmet");
 const { rateLimit } = require("express-rate-limit");
 const { Pool } = require("pg");
+const webpush = require("web-push");
 const { getIntegrationCatalog } = require("./integrations/catalog");
 const { MONITORING_SCOPE } = require("./config/monitoring-scope");
 const { aggregatePosts, buildReport } = require("./analytics/engine");
@@ -34,7 +35,33 @@ function dbRequired(req, res, next) {
   if (!pool) return res.status(503).json({ error: "database_not_configured" });
   next();
 }
-function adminRequired(req, res, next) {
+function pushConfigured() {
+  return Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
+}
+if (pushConfigured()) webpush.setVapidDetails(
+  process.env.VAPID_SUBJECT || "https://demtaiwo1-eng.github.io/sharafadeenalli.github.io/",
+  process.env.VAPID_PUBLIC_KEY,
+  process.env.VAPID_PRIVATE_KEY
+);
+async function notifyPushSubscribers(post) {
+  if (!pool || !pushConfigured()) return;
+  const result = await pool.query("SELECT id, endpoint, p256dh, auth_secret FROM push_subscriptions");
+  const payload = JSON.stringify({
+    title: "New public discussion found",
+    body: String(post.postText || "A new public source record was collected").slice(0, 180),
+    url: validUrl(post.postUrl) ? post.postUrl : "https://demtaiwo1-eng.github.io/sharafadeenalli.github.io/"
+  });
+  await Promise.all(result.rows.map(async row => {
+    try {
+      await webpush.sendNotification({ endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth_secret } }, payload, { TTL: 3600, urgency: "normal" });
+      await pool.query("UPDATE push_subscriptions SET last_seen_at=NOW() WHERE id=$1", [row.id]);
+    } catch (error) {
+      if (error.statusCode === 404 || error.statusCode === 410) await pool.query("DELETE FROM push_subscriptions WHERE id=$1", [row.id]);
+      else console.warn(JSON.stringify({ level:"warn", source:"web_push", status:error.statusCode || null, message:error.message }));
+    }
+  }));
+}
+\nfunction adminRequired(req, res, next) {
   if (!adminToken) return res.status(503).json({ error: "admin_auth_not_configured" });
   const token = (req.get("authorization") || "").replace(/^Bearer\s+/i, "");
   const a = Buffer.from(token), b = Buffer.from(adminToken);
@@ -92,8 +119,7 @@ async function storeSocialPost({ platform, externalId, postUrl, authorHandle, po
     "INSERT INTO social_posts (platform, external_id, post_url, author_handle, post_text, published_at, matched_hashtags) VALUES ($1,$2,$3,$4,$5,$6,$7::TEXT[]) ON CONFLICT DO NOTHING RETURNING id",
     [platform, externalId, postUrl, String(authorHandle || "").slice(0,160), postText, publishedAt, matchedHashtags]
   );
-  if (result.rowCount === 1) await indexPostTerms(result.rows[0].id, platform, postText);
-  return result.rows[0]?.id || null;
+  if (result.rowCount === 1) {\n    await indexPostTerms(result.rows[0].id, platform, postText);\n    void notifyPushSubscribers({ postText, postUrl });\n  }\n  return result.rows[0]?.id || null;
 }
 let keywordBackfillBusy = false;
 async function backfillUnindexedPostTerms() {
@@ -325,6 +351,33 @@ app.get("/health", async (req, res) => {
   if (!pool) return res.status(503).json({ status: "degraded", database: "not_configured" });
   try { await pool.query("SELECT 1"); res.json({ status: "ok", database: "connected" }); }
   catch { res.status(503).json({ status: "degraded", database: "unavailable" }); }
+});
+
+app.get("/v1/notifications/public-key", (req, res) => {
+  if (!pushConfigured()) return res.status(503).json({ error:"push_not_configured" });
+  res.set("Cache-Control", "no-store");
+  res.json({ publicKey: process.env.VAPID_PUBLIC_KEY });
+});
+app.post("/v1/notifications/subscribe", dbRequired, async (req, res, next) => {
+  try {
+    if (!pushConfigured()) return res.status(503).json({ error:"push_not_configured" });
+    const sub = req.body?.subscription;
+    const endpoint = String(sub?.endpoint || "");
+    const p256dh = String(sub?.keys?.p256dh || "");
+    const auth = String(sub?.keys?.auth || "");
+    if (!validUrl(endpoint) || !endpoint.startsWith("https://") || endpoint.length > 2048 ||
+        !/^[A-Za-z0-9_-]{40,200}$/.test(p256dh) || !/^[A-Za-z0-9_-]{16,100}$/.test(auth)) return res.status(400).json({ error:"invalid_push_subscription" });
+    await pool.query("INSERT INTO push_subscriptions (endpoint,p256dh,auth_secret) VALUES ($1,$2,$3) ON CONFLICT (endpoint) DO UPDATE SET p256dh=EXCLUDED.p256dh,auth_secret=EXCLUDED.auth_secret,last_seen_at=NOW()", [endpoint,p256dh,auth]);
+    res.status(201).json({ subscribed:true });
+  } catch (error) { next(error); }
+});
+app.post("/v1/notifications/unsubscribe", dbRequired, async (req, res, next) => {
+  try {
+    const endpoint = String(req.body?.endpoint || "");
+    if (!validUrl(endpoint) || !endpoint.startsWith("https://") || endpoint.length > 2048) return res.status(400).json({ error:"invalid_endpoint" });
+    await pool.query("DELETE FROM push_subscriptions WHERE endpoint=$1", [endpoint]);
+    res.json({ unsubscribed:true });
+  } catch (error) { next(error); }
 });
 
 app.get("/v1/public/updates", dbRequired, async (req, res, next) => {
