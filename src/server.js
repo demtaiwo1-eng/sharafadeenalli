@@ -19,7 +19,7 @@ const pool = process.env.DATABASE_URL ? new Pool({
 app.disable("x-powered-by");
 app.use(helmet());
 app.use(cors({ origin(origin, cb) {
-  if (!origin || origins.length === 0 || origins.includes(origin)) return cb(null, true);
+  if (!origin || origins.includes(origin)) return cb(null, true);
   return cb(new Error("Origin not allowed"));
 }, methods: ["GET", "POST", "OPTIONS"], allowedHeaders: ["Content-Type", "Authorization"] }));
 app.use(express.json({ limit: "64kb" }));
@@ -93,16 +93,17 @@ app.get("/v1/operations/projects", dbRequired, async (req, res, next) => {
 
 app.post("/v1/admin/updates", dbRequired, adminRequired, async (req, res, next) => {
   try {
-    const { title, summary = "", topic = "General", publishedAt, sourceName, sourceUrl, verificationStatus = "unreviewed" } = req.body || {};
+    const { title, summary = "", topic = "General", publishedAt, sourceName, sourceUrl, verificationStatus = "unreviewed", status = "draft" } = req.body || {};
     const statuses = ["unreviewed", "reported", "corroborated", "verified", "corrected"];
     if (typeof title !== "string" || title.trim().length < 3 || title.length > 240 ||
         typeof publishedAt !== "string" || Number.isNaN(Date.parse(publishedAt)) ||
-        typeof sourceUrl !== "string" || !validUrl(sourceUrl) || !statuses.includes(verificationStatus)) {
+        typeof sourceUrl !== "string" || !validUrl(sourceUrl) || !statuses.includes(verificationStatus) ||
+        !["draft", "published"].includes(status) || (status === "published" && !["corroborated", "verified"].includes(verificationStatus))) {
       return res.status(400).json({ error: "invalid_update_payload" });
     }
     const result = await pool.query(
-      "INSERT INTO public_updates (title, summary, topic, published_at, source_name, source_url, verification_status, status) VALUES ($1,$2,$3,$4,$5,$6,$7,'published') ON CONFLICT (source_url) DO UPDATE SET title=EXCLUDED.title, summary=EXCLUDED.summary, topic=EXCLUDED.topic, published_at=EXCLUDED.published_at, source_name=EXCLUDED.source_name, verification_status=EXCLUDED.verification_status, updated_at=NOW() RETURNING id, title, verification_status AS \"verificationStatus\"",
-      [title.trim(), String(summary).slice(0, 4000), String(topic).slice(0, 80), publishedAt, String(sourceName || "Unknown").slice(0, 160), sourceUrl, verificationStatus]
+      "INSERT INTO public_updates (title, summary, topic, published_at, source_name, source_url, verification_status, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (source_url) DO UPDATE SET title=EXCLUDED.title, summary=EXCLUDED.summary, topic=EXCLUDED.topic, published_at=EXCLUDED.published_at, source_name=EXCLUDED.source_name, verification_status=EXCLUDED.verification_status, status=EXCLUDED.status, updated_at=NOW() RETURNING id, title, verification_status AS \"verificationStatus\"",
+      [title.trim(), String(summary).slice(0, 4000), String(topic).slice(0, 80), publishedAt, String(sourceName || "Unknown").slice(0, 160), sourceUrl, verificationStatus, status]
     );
     res.status(201).json(result.rows[0]);
   } catch (error) { next(error); }
