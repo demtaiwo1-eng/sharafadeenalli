@@ -90,7 +90,56 @@ async function storeSocialPost({ platform, externalId, postUrl, authorHandle, po
     [platform, externalId, postUrl, String(authorHandle || "").slice(0,160), postText, publishedAt]
   );
   if (result.rowCount === 1) await indexPostTerms(result.rows[0].id, platform, postText);
-  return result.rowCount === 1;
+  return result.rows[0]?.id || null;
+}
+async function storeBlueskyThreadNode(node, rootPostId, parentExternalId, depth) {
+  if (!node?.post?.uri || depth > 6) return 0;
+  const post = node.post;
+  const text = post.record?.text || "";
+  const externalId = post.uri;
+  const rkey = externalId.split("/").pop();
+  const author = post.author?.handle || post.author?.did || "";
+  const url = "https://bsky.app/profile/" + encodeURIComponent(author) + "/post/" + encodeURIComponent(rkey);
+  const inserted = await pool.query(
+    "INSERT INTO social_threads (platform, external_id, root_post_id, parent_external_id, thread_depth, post_url, author_handle, content, published_at, source_payload) VALUES ('bluesky',$1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb) ON CONFLICT (platform, external_id) DO NOTHING RETURNING id",
+    [externalId, rootPostId, parentExternalId, depth, url, String(author).slice(0,160), text, post.record?.createdAt || post.indexedAt || null, JSON.stringify({ replyCount: post.replyCount || 0 })]
+  );
+  let saved = 0;
+  if (inserted.rowCount) {
+    saved++;
+    const threadId = inserted.rows[0].id;
+    for (const term of extractTextTerms(text)) {
+      const keyword = term.normalized.slice(0,160);
+      await pool.query(
+        "INSERT INTO post_keywords (source_thread_id, platform, keyword, normalized_keyword, term_type, occurrences) VALUES ($1,'bluesky',$2,$2,$3,$4) ON CONFLICT (source_thread_id, normalized_keyword, term_type) WHERE source_thread_id IS NOT NULL DO UPDATE SET occurrences=EXCLUDED.occurrences, extracted_at=NOW()",
+        [threadId, keyword, term.termType, term.occurrences]
+      );
+      if (term.termType === "hashtag") {
+        await pool.query(
+          "INSERT INTO discovered_hashtags (platform, hashtag, normalized_hashtag, source_thread_id, occurrence_count) VALUES ('bluesky',$1,$2,$3,$4)",
+          ["#" + keyword.replace(/^#/, ""), term.normalized.replace(/^#/, ""), threadId, term.occurrences]
+        );
+      }
+    }
+  }
+  for (const child of (node.replies || [])) {
+    saved += await storeBlueskyThreadNode(child, rootPostId, externalId, depth + 1);
+  }
+  return saved;
+}
+async function syncBlueskyThread(uri, rootPostId) {
+  try {
+    const url = "https://public.api.bsky.app/xrpc/app.bsky.feed.getPostThread?uri=" + encodeURIComponent(uri) + "&depth=6&parentHeight=0";
+    const response = await fetch(url, { signal: AbortSignal.timeout(5000), headers: { Accept: "application/json" } });
+    if (!response.ok) return 0;
+    const data = await response.json();
+    let saved = 0;
+    for (const reply of (data.thread?.replies || [])) saved += await storeBlueskyThreadNode(reply, rootPostId, uri, 1);
+    return saved;
+  } catch (error) {
+    console.warn(JSON.stringify({ level: "warn", source: "bluesky_thread", message: error.message }));
+    return 0;
+  }
 }
 async function syncPublicSources() {
   if (!pool || sourceSyncBusy) return;
@@ -100,10 +149,11 @@ async function syncPublicSources() {
     const blueskyResponse = await fetch(blueskyUrl, { signal: AbortSignal.timeout(4500), headers: { Accept: "application/json" } });
     if (blueskyResponse.ok) {
       const data = await blueskyResponse.json();
+      let threadBudget = 2;
       for (const item of (data.posts || [])) {
         const uri = item.uri || "";
         const rkey = uri.split("/").pop();
-        await storeSocialPost({
+        const insertedPostId = await storeSocialPost({
           platform: "bluesky",
           externalId: uri,
           postUrl: "https://bsky.app/profile/" + encodeURIComponent(item.author?.handle || item.author?.did || "") + "/post/" + encodeURIComponent(rkey),
@@ -111,6 +161,10 @@ async function syncPublicSources() {
           postText: item.record?.text || "",
           publishedAt: item.record?.createdAt || item.indexedAt
         });
+        if (insertedPostId && threadBudget > 0 && Number(item.replyCount || 0) > 0) {
+          await syncBlueskyThread(uri, insertedPostId);
+          threadBudget--;
+        }
       }
     }
   } catch (error) {
