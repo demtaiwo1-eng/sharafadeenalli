@@ -8,7 +8,7 @@ This repository now contains an initial Node.js/PostgreSQL API foundation. It is
 - Public, published-update listing and keyword search.
 - Aggregate topic/source monitoring summary.
 - Publicly visible project listing.
-- Token-protected admin ingestion endpoint for sourced public updates.
+- Token-protected admin ingestion endpoint for sourced public updates; new records default to drafts, and publication requires a corroborated or verified status.
 - Dockerfile and environment template.
 
 ## API routes
@@ -22,8 +22,8 @@ This repository now contains an initial Node.js/PostgreSQL API foundation. It is
 1. Provision a managed PostgreSQL database (Neon is suitable for an initial managed database).
 2. Deploy this repository as a Node 20 web service or Docker service on a host that supports persistent server processes.
 3. Set environment variables from `.env.example` in the host's secret/configuration panel. Never commit actual secrets.
-4. Set `CORS_ORIGIN` to the exact website origin, for example `https://demtaiwo1-eng.github.io` (origin only; no path).
-5. Set a long random `ADMIN_API_TOKEN` in the host secret store.
+4. Set `CORS_ORIGIN` to the exact website origin, for example `https://demtaiwo1-eng.github.io` (origin only; no path). Cross-origin requests are denied when no allowed origins are configured.
+5. Set a long random `ADMIN_API_TOKEN` in the host secret store. Ingestion records default to `draft`; set `status: "published"` only with `verificationStatus: "corroborated"` or `"verified"`.
 6. Run `npm install`, then `npm run migrate`, then `npm start`.
 7. Confirm `/health` returns `200` and `database: connected`.
 8. Set `API_BASE_URL` in the website repository's `config.js` to the deployed API origin.
