@@ -1,0 +1,43 @@
+name: API integration catalogue checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  syntax-and-catalogue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Check JavaScript syntax
+        run: |
+          node --check src/server.js
+          node --check src/integrations/catalog.js
+          node --check src/migrate.js
+      - name: Validate integration catalogue
+        run: |
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          const { getIntegrationCatalog } = require('./src/integrations/catalog');
+          const entries = getIntegrationCatalog({});
+          const ids = entries.map(entry => entry.id);
+          assert.equal(entries.length, 29, 'expected all 29 integration entries');
+          assert.equal(new Set(ids).size, ids.length, 'integration IDs must be unique');
+          for (const entry of entries) {
+            assert.ok(entry.name && entry.docs && entry.kind, 'each integration needs a name, docs URL and category');
+            assert.ok(Array.isArray(entry.capabilities), 'each integration needs a capability list');
+            assert.equal(typeof entry.configured, 'boolean');
+          }
+          const publicApi = entries.find(entry => entry.id === 'hacker_news');
+          assert.equal(publicApi.connectionStatus, 'public_access_unverified');
+          const x = getIntegrationCatalog({ X_BEARER_TOKEN: 'test-token' }).find(entry => entry.id === 'x');
+          assert.equal(x.configured, true);
+          assert.equal(JSON.stringify(entries).includes('test-token'), false, 'catalogue must never expose secret values');
+          console.log('Validated', entries.length, 'integration entries');
+          NODE
