@@ -22,7 +22,7 @@ This repository now contains an initial Node.js/PostgreSQL API foundation. It is
 
 ## Platform API integration catalogue
 
-The API exposes a catalogue covering X, Bluesky, Reddit, YouTube, Facebook, Instagram, Threads, TikTok, LinkedIn, Mastodon, Telegram, Discord, public news/RSS feeds, government/election open data, and optional unified providers (Desearch, TagX ListenX and Social Fetch).
+The API exposes a catalogue of 29 source/provider entries: X, Bluesky, Reddit, YouTube, Facebook, Instagram, Threads, TikTok, LinkedIn, Mastodon, Telegram, Discord, Pinterest, Snapchat, Twitch, Rumble, Truth Social, Gab, GETTR, Kwai, Kick, Tumblr, Hacker News, Substack, Medium, public news/RSS feeds, government/election open data, and optional unified providers (Desearch, TagX ListenX and Social Fetch).
 
 Configure credentials only in the Render service's secret environment settings (or another server-side secret manager). Never put API keys in the GitHub Pages frontend, browser local storage, source control, or public API responses. The catalogue's `configured` flag only checks whether required environment variables exist; it does not validate a token, confirm platform approval, or guarantee a data entitlement.
 
