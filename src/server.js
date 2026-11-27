@@ -16,7 +16,7 @@ const pool = process.env.DATABASE_URL ? new Pool({
   connectionTimeoutMillis: 5000
 }) : null;
 
-app.disable("x-powered-by");
+app.disable("x-powered-by");\napp.set("trust proxy", 1);
 app.use(helmet());
 app.use(cors({ origin(origin, cb) {
   if (!origin || origins.includes(origin)) return cb(null, true);
