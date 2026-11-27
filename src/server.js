@@ -40,6 +40,72 @@ function validUrl(value) {
   try { const u = new URL(value); return ["http:", "https:"].includes(u.protocol); } catch { return false; }
 }
 
+
+const exactSarafadeenTag = /(^|[^\p{L}\p{N}_])#sarafadeen(?![\p{L}\p{N}_])/iu;
+let sourceSyncBusy = false;
+async function storeSocialPost({ platform, externalId, postUrl, authorHandle, postText, publishedAt }) {
+  if (!exactSarafadeenTag.test(postText || "") || !postUrl || !publishedAt) return false;
+  const result = await pool.query(
+    "INSERT INTO social_posts (platform, external_id, post_url, author_handle, post_text, published_at, matched_hashtags) VALUES ($1,$2,$3,$4,$5,$6,ARRAY['#sarafadeen']::TEXT[]) ON CONFLICT DO NOTHING",
+    [platform, externalId, postUrl, String(authorHandle || "").slice(0,160), postText, publishedAt]
+  );
+  return result.rowCount === 1;
+}
+async function syncPublicSources() {
+  if (!pool || sourceSyncBusy) return;
+  sourceSyncBusy = true;
+  try {
+    const blueskyUrl = "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=" + encodeURIComponent("#Sarafadeen") + "&limit=100";
+    const blueskyResponse = await fetch(blueskyUrl, { signal: AbortSignal.timeout(4500), headers: { Accept: "application/json" } });
+    if (blueskyResponse.ok) {
+      const data = await blueskyResponse.json();
+      for (const item of (data.posts || [])) {
+        const uri = item.uri || "";
+        const rkey = uri.split("/").pop();
+        await storeSocialPost({
+          platform: "bluesky",
+          externalId: uri,
+          postUrl: "https://bsky.app/profile/" + encodeURIComponent(item.author?.handle || item.author?.did || "") + "/post/" + encodeURIComponent(rkey),
+          authorHandle: item.author?.handle || "",
+          postText: item.record?.text || "",
+          publishedAt: item.record?.createdAt || item.indexedAt
+        });
+      }
+    }
+  } catch (error) {
+    console.warn(JSON.stringify({ level: "warn", source: "bluesky", message: error.message }));
+  }
+  if (process.env.X_BEARER_TOKEN) {
+    try {
+      const params = new URLSearchParams({ query: "#Sarafadeen", max_results: "100", "tweet.fields": "created_at,author_id", expansions: "author_id", "user.fields": "username" });
+      const response = await fetch("https://api.x.com/2/tweets/search/recent?" + params.toString(), {
+        signal: AbortSignal.timeout(4500),
+        headers: { Authorization: "Bearer " + process.env.X_BEARER_TOKEN, Accept: "application/json" }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const authors = new Map((data.includes?.users || []).map(user => [user.id, user.username]));
+        for (const post of (data.data || [])) {
+          const handle = authors.get(post.author_id) || "";
+          await storeSocialPost({
+            platform: "x",
+            externalId: post.id,
+            postUrl: "https://x.com/" + encodeURIComponent(handle || "i") + "/status/" + encodeURIComponent(post.id),
+            authorHandle: handle ? "@" + handle : "",
+            postText: post.text || "",
+            publishedAt: post.created_at
+          });
+        }
+      } else {
+        console.warn(JSON.stringify({ level: "warn", source: "x", status: response.status }));
+      }
+    } catch (error) {
+      console.warn(JSON.stringify({ level: "warn", source: "x", message: error.message }));
+    }
+  }
+  sourceSyncBusy = false;
+}
+
 app.get("/health", async (req, res) => {
   if (!pool) return res.status(503).json({ status: "degraded", database: "not_configured" });
   try { await pool.query("SELECT 1"); res.json({ status: "ok", database: "connected" }); }
@@ -152,7 +218,7 @@ app.use((error, req, res, next) => {
   console.error(JSON.stringify({ level: "error", message: error.message, path: req.path }));
   res.status(500).json({ error: "internal_server_error" });
 });
-const server = app.listen(port, () => console.log(JSON.stringify({ level: "info", message: "CampTech API listening", port })));
+const server = app.listen(port, () => { console.log(JSON.stringify({ level: "info", message: "CampTech API listening", port })); setTimeout(syncPublicSources, 1000); setInterval(syncPublicSources, 5000); });
 async function shutdown() {
   server.close(async () => { if (pool) await pool.end(); process.exit(0); });
   setTimeout(() => process.exit(1), 10000).unref();
