@@ -1,6 +1,6 @@
 const { Pool } = require("pg");
 if (!process.env.DATABASE_URL) { console.error("DATABASE_URL is required"); process.exit(1); }
-const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false } });
+const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: true } });
 (async () => {
   try {
     const result = await pool.query(
