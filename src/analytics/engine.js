@@ -23,14 +23,14 @@ const OYO_LOCATIONS = [
 const POSITIVE = new Set(["good","great","excellent","improved","improvement","completed","delivered","success","successful","benefit","beneficial","support","supported","commend","commendable","progress","progressive","working","resolved","peaceful","better","well done"]);
 const NEGATIVE = new Set(["bad","poor","failed","failure","delay","delayed","abandoned","corrupt","corruption","crisis","problem","problems","unsafe","insecurity","violence","worse","worsening","unfair","neglect","neglected","suffering","shortage","broken","collapse","disappointed","disappointing"]);
 
-function tokenize(text) {
+function containsPlace(text, place) {\n  const escaped = place.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\function tokenize(text) {");\n  return new RegExp("(^|[^\\\\p{L}\\\\p{N}])" + escaped + "(?![\\\\p{L}\\\\p{N}])", "u").test(text);\n}\nfunction tokenize(text) {
   return (String(text || "").toLocaleLowerCase("en-NG").match(/[\p{L}\p{N}][\p{L}\p{N}'’-]{1,48}/gu) || []);
 }
 function classifyPost(post) {
   const text = String(post.text || "");
   const lower = text.toLocaleLowerCase("en-NG");
   const tokens = tokenize(text);
-  const locations = OYO_LOCATIONS.filter(place => lower.includes(place));
+  const locations = OYO_LOCATIONS.filter(place => containsPlace(lower, place));
   const issues = ISSUE_TAXONOMY.map(issue => ({
     key: issue.key, label: issue.label,
     hits: issue.terms.filter(term => lower.includes(term)).length
