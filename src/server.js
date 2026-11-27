@@ -221,65 +221,82 @@ async function syncConfiguredAdapters() {
   return results;
 }
 
+async function withCollectionRun(platform, collectionType, collector) {
+  const started=await pool.query(
+    "INSERT INTO collection_runs (platform, collection_type, query_label, status, coverage_note) VALUES ($1,$2,$3,'running','Collection started; provider permissions and result limits apply.') RETURNING id",
+    [platform,collectionType,"Sarafadeen / Sarafadeen Alli"]
+  );
+  const runId=started.rows[0].id;
+  try {
+    const result=await collector();
+    const status=result.configured===false ? "partial" : "succeeded";
+    await pool.query(
+      "UPDATE collection_runs SET finished_at=NOW(),status=$2,posts_seen=$3,replies_seen=$4,errors_count=0,coverage_note=$5 WHERE id=$1",
+      [runId,status,result.postsSeen||0,result.repliesSeen||0,String(result.note||"").slice(0,2000)]
+    );
+  } catch(error) {
+    const status=error.status===429 ? "rate_limited" : "failed";
+    await pool.query(
+      "UPDATE collection_runs SET finished_at=NOW(),status=$2,errors_count=1,error_class=$3,coverage_note=$4 WHERE id=$1",
+      [runId,status,status==="rate_limited"?"rate_limit":"provider_error",String(error.message).slice(0,2000)]
+    );
+    console.warn(JSON.stringify({level:"warn",source:platform,message:error.message,status:error.status||null}));
+  }
+}
 async function syncPublicSources() {
   if (!pool || sourceSyncBusy) return;
   sourceSyncBusy = true;
   try {
-    const blueskyUrl = "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=" + encodeURIComponent("Sarafadeen") + "&limit=100";
-    const blueskyResponse = await fetch(blueskyUrl, { signal: AbortSignal.timeout(4500), headers: { Accept: "application/json" } });
-    if (blueskyResponse.ok) {
-      const data = await blueskyResponse.json();
-      let threadBudget = 2;
-      for (const item of (data.posts || [])) {
-        const uri = item.uri || "";
-        const rkey = uri.split("/").pop();
-        const insertedPostId = await storeSocialPost({
-          platform: "bluesky",
-          externalId: uri,
-          postUrl: "https://bsky.app/profile/" + encodeURIComponent(item.author?.handle || item.author?.did || "") + "/post/" + encodeURIComponent(rkey),
-          authorHandle: item.author?.handle || "",
-          postText: item.record?.text || "",
-          publishedAt: item.record?.createdAt || item.indexedAt
+    await withCollectionRun("bluesky","search",async()=>{
+      const url="https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q="+encodeURIComponent("Sarafadeen")+"&limit=100";
+      const response=await fetch(url,{signal:AbortSignal.timeout(8000),headers:{Accept:"application/json"}});
+      if(!response.ok){const error=new Error("bluesky_http_"+response.status);error.status=response.status;throw error;}
+      const data=await response.json();
+      let threadBudget=2,postsSeen=0,repliesSeen=0;
+      for(const item of (data.posts||[])){
+        const uri=item.uri||"",rkey=uri.split("/").pop();
+        const rootId=await storeSocialPost({
+          platform:"bluesky",externalId:uri,
+          postUrl:"https://bsky.app/profile/"+encodeURIComponent(item.author?.handle||item.author?.did||"")+"/post/"+encodeURIComponent(rkey),
+          authorHandle:item.author?.handle||"",postText:item.record?.text||"",
+          publishedAt:item.record?.createdAt||item.indexedAt
         });
-        if (insertedPostId && threadBudget > 0 && Number(item.replyCount || 0) > 0) {
-          await syncBlueskyThread(uri, insertedPostId);
-          threadBudget--;
+        if(rootId){
+          postsSeen++;
+          if(threadBudget>0&&Number(item.replyCount||0)>0){
+            repliesSeen+=await syncBlueskyThread(uri,rootId);
+            threadBudget--;
+          }
         }
       }
-    }
-  } catch (error) {
-    console.warn(JSON.stringify({ level: "warn", source: "bluesky", message: error.message }));
-  }
-  if (process.env.X_BEARER_TOKEN) {
-    try {
-      const params = new URLSearchParams({ query: "Sarafadeen", max_results: "100", "tweet.fields": "created_at,author_id", expansions: "author_id", "user.fields": "username" });
-      const response = await fetch("https://api.x.com/2/tweets/search/recent?" + params.toString(), {
-        signal: AbortSignal.timeout(4500),
-        headers: { Authorization: "Bearer " + process.env.X_BEARER_TOKEN, Accept: "application/json" }
+      return {postsSeen,repliesSeen,note:"Bluesky public search and up to two new reply threads per collection cycle; thread depth is capped at six."};
+    });
+    await withCollectionRun("x","search",async()=>{
+      if(!process.env.X_BEARER_TOKEN)return {configured:false,note:"X_BEARER_TOKEN is not configured."};
+      const params=new URLSearchParams({query:"Sarafadeen",max_results:"100","tweet.fields":"created_at,author_id","expansions":"author_id","user.fields":"username"});
+      const response=await fetch("https://api.x.com/2/tweets/search/recent?"+params.toString(),{
+        signal:AbortSignal.timeout(8000),headers:{Authorization:"Bearer "+process.env.X_BEARER_TOKEN,Accept:"application/json"}
       });
-      if (response.ok) {
-        const data = await response.json();
-        const authors = new Map((data.includes?.users || []).map(user => [user.id, user.username]));
-        for (const post of (data.data || [])) {
-          const handle = authors.get(post.author_id) || "";
-          await storeSocialPost({
-            platform: "x",
-            externalId: post.id,
-            postUrl: "https://x.com/" + encodeURIComponent(handle || "i") + "/status/" + encodeURIComponent(post.id),
-            authorHandle: handle ? "@" + handle : "",
-            postText: post.text || "",
-            publishedAt: post.created_at
-          });
-        }
-      } else {
-        console.warn(JSON.stringify({ level: "warn", source: "x", status: response.status }));
+      if(!response.ok){const error=new Error("x_http_"+response.status);error.status=response.status;throw error;}
+      const data=await response.json(),authors=new Map((data.includes?.users||[]).map(user=>[user.id,user.username]));
+      let postsSeen=0;
+      for(const post of (data.data||[])){
+        const handle=authors.get(post.author_id)||"";
+        const id=await storeSocialPost({
+          platform:"x",externalId:post.id,
+          postUrl:"https://x.com/"+encodeURIComponent(handle||"i")+"/status/"+encodeURIComponent(post.id),
+          authorHandle:handle?"@"+handle:"",postText:post.text||"",publishedAt:post.created_at
+        });
+        if(id)postsSeen++;
       }
-    } catch (error) {
-      console.warn(JSON.stringify({ level: "warn", source: "x", message: error.message }));
-    }
+      return {postsSeen,note:"X recent-search API only; conversation and reply access depend on the account's granted API tier."};
+    });
+    await syncConfiguredAdapters();
+  } catch(error) {
+    console.warn(JSON.stringify({level:"warn",source:"public_source_sync",message:error.message}));
+  } finally {
+    sourceSyncBusy=false;
   }
-  try { await syncConfiguredAdapters(); } catch (error) { console.warn(JSON.stringify({level:"warn",source:"configured_adapters",message:error.message})); }
-  sourceSyncBusy = false;
 }
 
 app.get("/v1/monitoring/scope", (req, res) => {
