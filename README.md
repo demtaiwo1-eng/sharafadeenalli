@@ -28,7 +28,7 @@ Configure credentials only in the Render service's secret environment settings (
 
 See `src/integrations/catalog.js` for each connector's environment variable names, supported collection capabilities, access requirements and official/provider documentation links. Platform APIs differ: some expose public search and nested replies, while others only expose content from authorised accounts, approved research projects, or managed Pages. Collection must stay within each provider's permissions, terms, quotas and retention rules. A connector should be marked connected only after an authenticated health/test request succeeds.
 
-The catalogue is a foundation for a future administrator-facing connection picker. It does not yet implement OAuth handshakes, token validation, scheduled collection, reply-tree ingestion, or a frontend settings screen.
+The website now includes an API Connections picker where an administrator can select any catalogue entry and review its access requirements. The selected-source preference is currently stored in that browser only; it is not yet persisted as a server collection policy. The backend still needs the per-platform OAuth handshakes, live token validation, collection adapters, scheduled ingestion, reply-tree storage and analysis pipeline before a selected platform starts supplying records.
 
 ## Deploy and configure
 1. Provision a managed PostgreSQL database (Neon is suitable for an initial managed database).
