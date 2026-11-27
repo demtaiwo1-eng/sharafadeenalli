@@ -271,9 +271,9 @@ app.get("/v1/monitoring/keywords", dbRequired, async (req, res, next) => {
   try {
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 40, 1), 100);
     const [keywords, hashtags, coverage] = await Promise.all([
-      pool.query("SELECT normalized_keyword AS keyword, term_type AS term_type, SUM(occurrences)::int AS occurrences, COUNT(DISTINCT source_post_id)::int AS posts FROM post_keywords WHERE source_post_id IS NOT NULL GROUP BY normalized_keyword, term_type ORDER BY posts DESC, occurrences DESC LIMIT $1", [limit]),
-      pool.query("SELECT normalized_hashtag AS hashtag, SUM(occurrence_count)::int AS occurrences, COUNT(DISTINCT source_post_id)::int AS posts, MAX(last_seen_at) AS last_seen_at FROM discovered_hashtags WHERE source_post_id IS NOT NULL GROUP BY normalized_hashtag ORDER BY posts DESC, occurrences DESC LIMIT $1", [limit]),
-      pool.query("SELECT platform, COUNT(*)::int AS indexed_posts FROM post_keywords WHERE source_post_id IS NOT NULL GROUP BY platform ORDER BY indexed_posts DESC")
+      pool.query("SELECT normalized_keyword AS keyword, term_type AS term_type, SUM(occurrences)::int AS occurrences, COUNT(DISTINCT COALESCE(source_post_id::text, source_thread_id::text))::int AS records FROM post_keywords GROUP BY normalized_keyword, term_type ORDER BY records DESC, occurrences DESC LIMIT $1", [limit]),
+      pool.query("SELECT normalized_hashtag AS hashtag, SUM(occurrence_count)::int AS occurrences, COUNT(DISTINCT COALESCE(source_post_id::text, source_thread_id::text))::int AS records, MAX(last_seen_at) AS last_seen_at FROM discovered_hashtags GROUP BY normalized_hashtag ORDER BY records DESC, occurrences DESC LIMIT $1", [limit]),
+      pool.query("SELECT platform, COUNT(DISTINCT COALESCE(source_post_id::text, source_thread_id::text))::int AS indexed_records FROM post_keywords GROUP BY platform ORDER BY indexed_records DESC")
     ]);
     res.set("Cache-Control", "no-store");
     res.json({ keywords: keywords.rows, hashtags: hashtags.rows, indexedPostsByPlatform: coverage.rows, methodology: "Frequency-based extraction of words, adjacent two-word phrases and hashtags from collected public posts. Not semantic understanding or sentiment analysis.", generatedAt: new Date().toISOString() });
