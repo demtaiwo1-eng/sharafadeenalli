@@ -15,12 +15,13 @@ This repository now contains an initial Node.js/PostgreSQL API foundation. It is
 - `GET /health` — API/database readiness.
 - `GET /v1/public/updates?limit=30&q=term` — published records, source links and verification labels.
 - `GET /v1/monitoring/summary?from=ISO_DATE&to=ISO_DATE` — aggregate source/topic counts.
+- `GET /v1/monitoring/scope` — the active Oyo State public-discourse scope, anchored on Sarafadeen Alli, with geographic coverage, issue areas and analysis guardrails.
 - `GET /v1/integrations/catalog` — supported platform/provider catalogue, capabilities, access notes and whether required environment variables are configured.
 - `GET /v1/admin/integrations/status` — authenticated integration configuration status; never returns secret values.
 - `GET /v1/operations/projects` — public projects only.
 - `POST /v1/admin/updates` — protected ingestion endpoint; requires `Authorization: Bearer <ADMIN_API_TOKEN>`.
 
-## Platform API integration catalogue
+## Active monitoring scope\n\nThe initial geographic scope is **Oyo State, Nigeria**, with Sarafadeen Alli as the named discovery/context anchor. Coverage includes Ibadan, Ogbomosho, Oyo, Ibarapa, Oke-Ogun and the Oyo Central, Oyo North and Oyo South senatorial districts. Federal and national developments are included only when materially relevant to Oyo. Issue areas include governance, public services, infrastructure, education, health, agriculture, jobs, security, environment, budgets, legislation and constituency issues.\n\nCollection is designed to include public posts, replies and nested replies where platform access permits, discover hashtags, and extract words and phrases. Geographic relevance must be evidenced; a mention of the anchor alone does not prove Oyo relevance. English, Yoruba and Nigerian Pidgin are in scope. Analysis is aggregate and evidence-led; individual political profiling, voter-preference inference and individual-targeted political persuasion are excluded.\n\n## Platform API integration catalogue
 
 The API exposes a catalogue of 29 source/provider entries: X, Bluesky, Reddit, YouTube, Facebook, Instagram, Threads, TikTok, LinkedIn, Mastodon, Telegram, Discord, Pinterest, Snapchat, Twitch, Rumble, Truth Social, Gab, GETTR, Kwai, Kick, Tumblr, Hacker News, Substack, Medium, public news/RSS feeds, government/election open data, and optional unified providers (Desearch, TagX ListenX and Social Fetch).
 
