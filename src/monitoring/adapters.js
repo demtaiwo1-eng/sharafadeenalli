@@ -130,7 +130,7 @@ async function gdelt() {
   if (!(response.headers.get("content-type") || "").includes("json")) throw new Error("gdelt_non_json_response");
   const data = await response.json();
   const posts = (data.articles || []).filter(item => item.url && item.title && item.seendate).map(item => {
-    const match = String(item.seendate).match(/^(\\d{4})(\\d{2})(\\d{2})T(\\d{2})(\\d{2})(\\d{2})Z$/);
+    const match = String(item.seendate).match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
     const publishedAt = match ? new Date(Date.UTC(Number(match[1]), Number(match[2])-1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6]))).toISOString() : null;
     return { id: item.url, text: String(item.title).slice(0,12000), url: item.url, author: item.domain || item.sourcecountry || "GDELT-indexed publisher", publishedAt, replies: [], queryMatched: true };
   }).filter(item => item.publishedAt);
