@@ -83,7 +83,42 @@ app.get("/v1/monitoring/summary", dbRequired, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.get("/v1/operations/projects", dbRequired, async (req, res, next) => {
+
+app.get("/v1/monitoring/hashtag", dbRequired, async (req, res, next) => {
+  try {
+    const tag = String(req.query.tag || "Sarafadeen").trim().replace(/^#/, "").toLowerCase();
+    if (tag !== "sarafadeen") return res.status(400).json({ error: "unsupported_hashtag" });
+    const where = "'#sarafadeen' = ANY(matched_hashtags) AND verification_status <> 'excluded'";
+    const [totals, platforms, hourly, posts] = await Promise.all([
+      pool.query("SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE published_at >= NOW() - INTERVAL '24 hours')::int AS \"last24h\", COUNT(*) FILTER (WHERE published_at >= NOW() - INTERVAL '1 hour')::int AS \"lastHour\", MAX(ingested_at) AS \"latestAt\" FROM social_posts WHERE " + where),
+      pool.query("SELECT platform, COUNT(*)::int AS count FROM social_posts WHERE " + where + " GROUP BY platform ORDER BY count DESC"),
+      pool.query("SELECT date_trunc('hour', published_at) AS bucket, COUNT(*)::int AS count FROM social_posts WHERE " + where + " AND published_at >= NOW() - INTERVAL '24 hours' GROUP BY bucket ORDER BY bucket"),
+      pool.query("SELECT platform, post_url AS \"postUrl\", author_handle AS \"authorHandle\", post_text AS \"postText\", published_at AS \"publishedAt\" FROM social_posts WHERE " + where + " ORDER BY published_at DESC LIMIT 30")
+    ]);
+    res.set("Cache-Control", "no-store");
+    res.json({ tag: "#Sarafadeen", ...totals.rows[0], platforms: platforms.rows, hourly: hourly.rows, posts: posts.rows, generatedAt: new Date().toISOString() });
+  } catch (error) { next(error); }
+});
+
+app.post("/v1/admin/social-posts", dbRequired, adminRequired, async (req, res, next) => {
+  try {
+    const { platform, externalId, postUrl, authorHandle = "", postText, publishedAt } = req.body || {};
+    const exactTag = /(^|[^\\p{L}\\p{N}_])#sarafadeen(?![\\p{L}\\p{N}_])/iu;
+    if (typeof platform !== "string" || !/^[a-z0-9_-]{2,40}$/i.test(platform) ||
+        typeof externalId !== "string" || externalId.length < 1 || externalId.length > 240 ||
+        typeof postUrl !== "string" || !validUrl(postUrl) ||
+        typeof postText !== "string" || postText.length < 1 || postText.length > 12000 || !exactTag.test(postText) ||
+        typeof publishedAt !== "string" || Number.isNaN(Date.parse(publishedAt))) {
+      return res.status(400).json({ error: "post_must_contain_exact_sarafadeen_hashtag_and_valid_public_source_fields" });
+    }
+    const result = await pool.query(
+      "INSERT INTO social_posts (platform, external_id, post_url, author_handle, post_text, published_at, matched_hashtags) VALUES ($1,$2,$3,$4,$5,$6,ARRAY['#sarafadeen']::TEXT[]) ON CONFLICT DO NOTHING RETURNING id",
+      [platform.toLowerCase(), externalId, postUrl, String(authorHandle).slice(0,160), postText, publishedAt]
+    );
+    res.status(result.rowCount ? 201 : 200).json({ accepted: result.rowCount === 1, duplicate: result.rowCount === 0 });
+  } catch (error) { next(error); }
+});
+\napp.get("/v1/operations/projects", dbRequired, async (req, res, next) => {
   try {
     const result = await pool.query("SELECT id, name, description, status, updated_at AS \"updatedAt\" FROM projects WHERE visibility = 'public' ORDER BY updated_at DESC LIMIT 100");
     res.set("Cache-Control", "public, max-age=30, stale-while-revalidate=120");
