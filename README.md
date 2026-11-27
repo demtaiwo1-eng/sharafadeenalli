@@ -66,3 +66,23 @@ Use public and authorised sources only. Preserve the original source URL and dat
 - SWOT and PESTLE outputs are structured review prompts. Frequency alone is not evidence that a programme succeeded, failed, or caused an outcome.
 - Public posts and replies are treated as leads for human verification. Coverage is limited by available public APIs and collected records.
 
+
+
+### Configured public-source collection adapters
+
+The API has optional, permission-scoped collectors for:
+- Bluesky public search and available public reply threads.
+- X recent search when an eligible bearer token is configured.
+- Reddit OAuth search and provider-returned nested comment trees.
+- YouTube Data API video search and available top-level/reply comments.
+- Mastodon public hashtag timelines on the configured instance.
+- Public RSS/Atom feed entries supplied in `NEWS_RSS_FEEDS`.
+
+Optional environment variables:
+- Reddit: `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USER_AGENT`, `REDDIT_REFRESH_TOKEN`.
+- YouTube: `YOUTUBE_API_KEY`.
+- Mastodon: `MASTODON_INSTANCE_URL` and optionally `MASTODON_ACCESS_TOKEN`.
+- RSS/Atom: `NEWS_RSS_FEEDS` as a comma-separated list of feed URLs.
+- Collection cadence: `COLLECTION_INTERVAL_MS` (default 900000; minimum 60000).
+
+Collector outcomes are written to `collection_runs`; authenticated administrators can inspect recent runs at `GET /v1/admin/monitoring/collection-runs`. Missing credentials are recorded as partial coverage, not as a successful connection. Platform quotas, API permissions, public availability and source terms remain in force. This is not a complete platform-wide firehose.
