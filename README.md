@@ -53,3 +53,16 @@ The website now includes an API Connections picker where an administrator can se
 
 ## Data integrity and safety
 Use public and authorised sources only. Preserve the original source URL and date. Clearly distinguish reported, corroborated and verified information. Do not profile individuals' political opinions, infer voter preferences, or target political persuasion to individuals. Do not place personal secrets in source control.
+
+
+### Aggregate public-discourse analytics
+
+- `GET /v1/monitoring/analytics?type=issue_map&days=30` — descriptive issue map.
+- Supported report types: `trend`, `sentiment`, `issue_map`, `swot`, `pestle`, `risk`, and `evidence_review`.
+- `days` is clamped to 1–180; analysis is limited to the latest 5,000 collected records.
+- `POST /v1/admin/analytics/reports` with an authenticated JSON body such as `{"type":"swot","days":30}` saves a report to `analytics_reports`.
+- Geography is labelled `oyo_named` only when a whole Oyo place name is present in the post text; otherwise it remains `oyo_unconfirmed`.
+- Sentiment values are transparent positive/negative word indicators, not validated sentiment, endorsement, polling, or voter-preference estimates.
+- SWOT and PESTLE outputs are structured review prompts. Frequency alone is not evidence that a programme succeeded, failed, or caused an outcome.
+- Public posts and replies are treated as leads for human verification. Coverage is limited by available public APIs and collected records.
+
