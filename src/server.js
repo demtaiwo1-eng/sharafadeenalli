@@ -6,6 +6,7 @@ const { Pool } = require("pg");
 const { getIntegrationCatalog } = require("./integrations/catalog");
 const { MONITORING_SCOPE } = require("./config/monitoring-scope");
 const { aggregatePosts, buildReport } = require("./analytics/engine");
+const { runAdapter } = require("./monitoring/adapters");
 
 const app = express();
 const port = Number(process.env.PORT || 8080);
@@ -158,6 +159,68 @@ async function syncBlueskyThread(uri, rootPostId) {
     return 0;
   }
 }
+async function storeExternalReply(reply, rootPostId, platform, parentExternalId) {
+  if (!reply?.id || !reply.text) return false;
+  const depth = Math.min(Math.max(Number(reply.depth || 1), 1), 100);
+  const result = await pool.query(
+    "INSERT INTO social_threads (platform, external_id, root_post_id, parent_external_id, thread_depth, post_url, author_handle, content, published_at, source_payload) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb) ON CONFLICT (platform, external_id) DO NOTHING RETURNING id",
+    [platform, String(reply.id).slice(0,240), rootPostId, String(reply.parentId || parentExternalId || "").slice(0,240), depth, validUrl(reply.url) ? reply.url : null, String(reply.author || "").slice(0,160), String(reply.text).slice(0,12000), reply.publishedAt && !Number.isNaN(Date.parse(reply.publishedAt)) ? reply.publishedAt : null, JSON.stringify({ collectedBy:"official_or_public_api_adapter" })]
+  );
+  if (!result.rowCount) return false;
+  const threadId=result.rows[0].id;
+  for (const term of extractTextTerms(reply.text)) {
+    const keyword=term.normalized.slice(0,160);
+    await pool.query(
+      "INSERT INTO post_keywords (source_thread_id, platform, keyword, normalized_keyword, term_type, occurrences) VALUES ($1,$2,$3,$3,$4,$5) ON CONFLICT (source_thread_id, normalized_keyword, term_type) WHERE source_thread_id IS NOT NULL DO UPDATE SET occurrences=EXCLUDED.occurrences, extracted_at=NOW()",
+      [threadId, platform, keyword, term.termType, term.occurrences]
+    );
+    if(term.termType==="hashtag") await pool.query(
+      "INSERT INTO discovered_hashtags (platform, hashtag, normalized_hashtag, source_thread_id, occurrence_count) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
+      [platform,"#"+keyword.replace(/^#/,""),term.normalized.replace(/^#/,""),threadId,term.occurrences]
+    );
+  }
+  return true;
+}
+async function runConfiguredAdapter(name) {
+  const started=await pool.query(
+    "INSERT INTO collection_runs (platform, collection_type, query_label, status, coverage_note) VALUES ($1,$2,$3,'running','Adapter collection started; coverage is limited to configured provider permissions and API results.') RETURNING id",
+    [name, name==="news_rss" ? "rss" : "search", "Sarafadeen / Sarafadeen Alli"]
+  );
+  const runId=started.rows[0].id;
+  let seen=0, replies=0, errors=0, status="succeeded", note="";
+  try {
+    const result=await runAdapter(name);
+    note=result.note || "";
+    for(const item of result.posts || []) {
+      if(!item.url || !validUrl(item.url) || !item.publishedAt || Number.isNaN(Date.parse(item.publishedAt))) continue;
+      const rootId=await storeSocialPost({
+        platform:name, externalId:String(item.id || item.url).slice(0,240), postUrl:item.url,
+        authorHandle:item.author || "", postText:item.text || "", publishedAt:item.publishedAt
+      });
+      if(rootId) seen++;
+      if(rootId) for(const reply of item.replies || []) {
+        if(await storeExternalReply(reply,rootId,name,item.id)) replies++;
+      }
+    }
+    if(!result.configured) status="partial";
+  } catch(error) {
+    errors++;
+    status=error.status===429 ? "rate_limited" : "failed";
+    note=error.message;
+    console.warn(JSON.stringify({level:"warn",source:name,message:error.message,status:error.status || null}));
+  }
+  await pool.query(
+    "UPDATE collection_runs SET finished_at=NOW(), status=$2, posts_seen=$3, replies_seen=$4, errors_count=$5, error_class=$6, coverage_note=$7 WHERE id=$1",
+    [runId,status,seen,replies,errors,errors ? (status==="rate_limited" ? "rate_limit" : "provider_error") : null,note.slice(0,2000)]
+  );
+  return { platform:name,status,postsSeen:seen,repliesSeen:replies,errors,note };
+}
+async function syncConfiguredAdapters() {
+  const results=[];
+  for(const name of ["reddit","youtube","mastodon","news_rss"]) results.push(await runConfiguredAdapter(name));
+  return results;
+}
+
 async function syncPublicSources() {
   if (!pool || sourceSyncBusy) return;
   sourceSyncBusy = true;
@@ -215,6 +278,7 @@ async function syncPublicSources() {
       console.warn(JSON.stringify({ level: "warn", source: "x", message: error.message }));
     }
   }
+  try { await syncConfiguredAdapters(); } catch (error) { console.warn(JSON.stringify({level:"warn",source:"configured_adapters",message:error.message})); }
   sourceSyncBusy = false;
 }
 
@@ -319,6 +383,15 @@ app.post("/v1/admin/analytics/reports", dbRequired, adminRequired, async (req, r
   } catch (error) { next(error); }
 });
 
+app.get("/v1/admin/monitoring/collection-runs", dbRequired, adminRequired, async (req,res,next) => {
+  try {
+    const limit=Math.min(Math.max(Number.parseInt(req.query.limit,10)||30,1),100);
+    const result=await pool.query("SELECT platform, collection_type, query_label, started_at, finished_at, status, posts_seen, replies_seen, errors_count, error_class, coverage_note FROM collection_runs ORDER BY started_at DESC LIMIT $1",[limit]);
+    res.set("Cache-Control","no-store");
+    res.json({runs:result.rows,generatedAt:new Date().toISOString()});
+  } catch(error){next(error);}
+});
+
 app.get("/v1/monitoring/keywords", dbRequired, async (req, res, next) => {
   try {
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 40, 1), 100);
@@ -400,7 +473,7 @@ app.use((error, req, res, next) => {
   console.error(JSON.stringify({ level: "error", message: error.message, path: req.path }));
   res.status(500).json({ error: "internal_server_error" });
 });
-const server = app.listen(port, () => { console.log(JSON.stringify({ level: "info", message: "CampTech API listening", port })); setTimeout(syncPublicSources, 1000); setInterval(syncPublicSources, 5000); setTimeout(backfillUnindexedPostTerms, 3000); setInterval(backfillUnindexedPostTerms, 30000); });
+const server = app.listen(port, () => { console.log(JSON.stringify({ level: "info", message: "CampTech API listening", port })); setTimeout(syncPublicSources, 1000); setInterval(syncPublicSources, Math.max(60000, Number(process.env.COLLECTION_INTERVAL_MS || 900000))); setTimeout(backfillUnindexedPostTerms, 3000); setInterval(backfillUnindexedPostTerms, 300000); });
 async function shutdown() {
   server.close(async () => { if (pool) await pool.end(); process.exit(0); });
   setTimeout(() => process.exit(1), 10000).unref();
