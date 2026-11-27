@@ -44,7 +44,7 @@ function validUrl(value) {
 }
 
 
-const exactSarafadeenTag = /(^|[^\p{L}\p{N}_])#sarafadeen(?![\p{L}\p{N}_])/iu;
+const exactSarafadeenTag = /(^|[^\p{L}\p{N}_])(?:#sarafadeen(?:alli)?|sarafadeen(?:\s+alli)?)(?![\p{L}\p{N}_])/iu;
 let sourceSyncBusy = false;
 const KEYWORD_STOPWORDS = new Set(("a an the and or but if then of to in on at for from by with as is are was were be been being it its this that these those i we you they he she them our your their my me us not no yes do does did have has had can could would should will may might about into over under after before than too very just also so such there here what when where why how who which while per via de la el en ni ati fun si ko mo o".split(/\s+/)));
 function extractTextTerms(value) {
@@ -84,10 +84,11 @@ async function indexPostTerms(postId, platform, text) {
   }
 }
 async function storeSocialPost({ platform, externalId, postUrl, authorHandle, postText, publishedAt }) {
-  if (!exactSarafadeenTag.test(postText || "") || !postUrl || !publishedAt) return false;
+  if (!exactSarafadeenTag.test(postText || "") || !postUrl || !publishedAt) return null;
+  const matchedHashtags = [...String(postText).matchAll(/(^|[^\p{L}\p{N}_])(#[\p{L}\p{N}_]{2,100})/gu)].map(match => match[2].toLowerCase());
   const result = await pool.query(
-    "INSERT INTO social_posts (platform, external_id, post_url, author_handle, post_text, published_at, matched_hashtags) VALUES ($1,$2,$3,$4,$5,$6,ARRAY['#sarafadeen']::TEXT[]) ON CONFLICT DO NOTHING RETURNING id",
-    [platform, externalId, postUrl, String(authorHandle || "").slice(0,160), postText, publishedAt]
+    "INSERT INTO social_posts (platform, external_id, post_url, author_handle, post_text, published_at, matched_hashtags) VALUES ($1,$2,$3,$4,$5,$6,$7::TEXT[]) ON CONFLICT DO NOTHING RETURNING id",
+    [platform, externalId, postUrl, String(authorHandle || "").slice(0,160), postText, publishedAt, matchedHashtags]
   );
   if (result.rowCount === 1) await indexPostTerms(result.rows[0].id, platform, postText);
   return result.rows[0]?.id || null;
@@ -160,7 +161,7 @@ async function syncPublicSources() {
   if (!pool || sourceSyncBusy) return;
   sourceSyncBusy = true;
   try {
-    const blueskyUrl = "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=" + encodeURIComponent("#Sarafadeen") + "&limit=100";
+    const blueskyUrl = "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=" + encodeURIComponent("Sarafadeen") + "&limit=100";
     const blueskyResponse = await fetch(blueskyUrl, { signal: AbortSignal.timeout(4500), headers: { Accept: "application/json" } });
     if (blueskyResponse.ok) {
       const data = await blueskyResponse.json();
@@ -187,7 +188,7 @@ async function syncPublicSources() {
   }
   if (process.env.X_BEARER_TOKEN) {
     try {
-      const params = new URLSearchParams({ query: "#Sarafadeen", max_results: "100", "tweet.fields": "created_at,author_id", expansions: "author_id", "user.fields": "username" });
+      const params = new URLSearchParams({ query: "Sarafadeen", max_results: "100", "tweet.fields": "created_at,author_id", expansions: "author_id", "user.fields": "username" });
       const response = await fetch("https://api.x.com/2/tweets/search/recent?" + params.toString(), {
         signal: AbortSignal.timeout(4500),
         headers: { Authorization: "Bearer " + process.env.X_BEARER_TOKEN, Accept: "application/json" }
@@ -299,7 +300,7 @@ app.get("/v1/monitoring/hashtag", dbRequired, async (req, res, next) => {
   try {
     const tag = String(req.query.tag || "Sarafadeen").trim().replace(/^#/, "").toLowerCase();
     if (tag !== "sarafadeen") return res.status(400).json({ error: "unsupported_hashtag" });
-    const where = "'#sarafadeen' = ANY(matched_hashtags) AND verification_status <> 'excluded'";
+    const where = "('#sarafadeen' = ANY(matched_hashtags) OR '#sarafadeenalli' = ANY(matched_hashtags) OR post_text ILIKE '%Sarafadeen Alli%') AND verification_status <> 'excluded'";
     const [totals, platforms, hourly, posts] = await Promise.all([
       pool.query("SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE published_at >= NOW() - INTERVAL '24 hours')::int AS \"last24h\", COUNT(*) FILTER (WHERE published_at >= NOW() - INTERVAL '1 hour')::int AS \"lastHour\", MAX(ingested_at) AS \"latestAt\" FROM social_posts WHERE " + where),
       pool.query("SELECT platform, COUNT(*)::int AS count FROM social_posts WHERE " + where + " GROUP BY platform ORDER BY count DESC"),
@@ -314,7 +315,7 @@ app.get("/v1/monitoring/hashtag", dbRequired, async (req, res, next) => {
 app.post("/v1/admin/social-posts", dbRequired, adminRequired, async (req, res, next) => {
   try {
     const { platform, externalId, postUrl, authorHandle = "", postText, publishedAt } = req.body || {};
-    const exactTag = /(^|[^\p{L}\p{N}_])#sarafadeen(?![\p{L}\p{N}_])/iu;
+    const exactTag = /(^|[^\p{L}\p{N}_])(?:#sarafadeen(?:alli)?|sarafadeen(?:\s+alli)?)(?![\p{L}\p{N}_])/iu;
     if (typeof platform !== "string" || !/^[a-z0-9_-]{2,40}$/i.test(platform) ||
         typeof externalId !== "string" || externalId.length < 1 || externalId.length > 240 ||
         typeof postUrl !== "string" || !validUrl(postUrl) ||
