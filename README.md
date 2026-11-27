@@ -87,3 +87,20 @@ Optional environment variables:
 - Collection cadence: `COLLECTION_INTERVAL_MS` (default 900000; minimum 60000).
 
 Collector outcomes are written to `collection_runs`; authenticated administrators can inspect recent runs at `GET /v1/admin/monitoring/collection-runs`. Missing credentials are recorded as partial coverage, not as a successful connection. Platform quotas, API permissions, public availability and source terms remain in force. This is not a complete platform-wide firehose. This deployment is restricted to free official APIs, public endpoints and RSS feeds; no paid provider is enabled or required.
+
+
+### Browser push notifications
+
+- The dashboard includes an explicit **Enable notifications** control. A visitor must grant browser notification permission on each device/browser.
+- Configure `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` in the backend host's secret environment. Never commit the private key.
+- `GET /v1/notifications/public-key` returns the public VAPID key.
+- `POST /v1/notifications/subscribe` stores a browser's Web Push subscription in `push_subscriptions`; `POST /v1/notifications/unsubscribe` removes it.
+- Newly ingested, deduplicated public records trigger push notifications to subscribed devices. Notifications are sent when a collector discovers a record; delivery timing still depends on source collection cadence, provider availability and push-service delivery.
+- Expired subscriptions (HTTP 404/410) are automatically removed. Users can revoke permission in their browser settings at any time.
+- Database schema: `migrations/003_push_subscriptions.sql`.
+
+### Account authorization and browser automation
+
+- Use each platform's official OAuth/approved API authorization flow for account connections. A user must complete sign-in and consent directly with the platform.
+- Do not collect passwords, one-time codes, session cookies, or reuse browser profiles to bypass platform access controls. Selenium/Chromium can be used for public-page QA and permitted browser workflows, not as a substitute for an approved API grant or to evade platform restrictions.
+- The current collectors only access sources listed as implemented above. An integration-catalog entry is not proof that a platform is connected or that all posts/replies are available.
