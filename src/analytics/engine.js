@@ -23,7 +23,11 @@ const OYO_LOCATIONS = [
 const POSITIVE = new Set(["good","great","excellent","improved","improvement","completed","delivered","success","successful","benefit","beneficial","support","supported","commend","commendable","progress","progressive","working","resolved","peaceful","better","well done"]);
 const NEGATIVE = new Set(["bad","poor","failed","failure","delay","delayed","abandoned","corrupt","corruption","crisis","problem","problems","unsafe","insecurity","violence","worse","worsening","unfair","neglect","neglected","suffering","shortage","broken","collapse","disappointed","disappointing"]);
 
-function containsPlace(text, place) {\n  const escaped = place.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\function tokenize(text) {");\n  return new RegExp("(^|[^\\\\p{L}\\\\p{N}])" + escaped + "(?![\\\\p{L}\\\\p{N}])", "u").test(text);\n}\nfunction tokenize(text) {
+function containsPlace(text, place) {
+  const pattern = place.trim().split(/\s+/).map(part => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
+  return new RegExp("(^|[^\\p{L}\\p{N}])" + pattern + "(?![\\p{L}\\p{N}])", "u").test(text);
+}
+function tokenize(text) {");\n  return new RegExp("(^|[^\\\\p{L}\\\\p{N}])" + escaped + "(?![\\\\p{L}\\\\p{N}])", "u").test(text);\n}\nfunction tokenize(text) {
   return (String(text || "").toLocaleLowerCase("en-NG").match(/[\p{L}\p{N}][\p{L}\p{N}'’-]{1,48}/gu) || []);
 }
 function classifyPost(post) {
