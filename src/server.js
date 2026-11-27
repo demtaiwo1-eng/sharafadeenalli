@@ -4,6 +4,7 @@ const helmet = require("helmet");
 const { rateLimit } = require("express-rate-limit");
 const { Pool } = require("pg");
 const { getIntegrationCatalog } = require("./integrations/catalog");
+const { MONITORING_SCOPE } = require("./config/monitoring-scope");
 
 const app = express();
 const port = Number(process.env.PORT || 8080);
@@ -107,6 +108,11 @@ async function syncPublicSources() {
   }
   sourceSyncBusy = false;
 }
+
+app.get("/v1/monitoring/scope", (req, res) => {
+  res.set("Cache-Control", "public, max-age=300");
+  res.json({ scope: MONITORING_SCOPE, generatedAt: new Date().toISOString() });
+});
 
 app.get("/v1/integrations/catalog", (req, res) => {
   res.set("Cache-Control", "no-store");
