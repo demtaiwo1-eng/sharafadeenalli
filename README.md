@@ -71,6 +71,7 @@ Use public and authorised sources only. Preserve the original source URL and dat
 ### Configured public-source collection adapters
 
 The API has optional, permission-scoped collectors for:
+- GDELT DOC 2.0 public news search (free, no API key; rolling seven-day query, up to 75 article metadata records, no comments/replies).
 - Bluesky public search and available public reply threads.
 - X recent search when an eligible bearer token is configured.
 - Reddit OAuth search and provider-returned nested comment trees.
@@ -85,4 +86,4 @@ Optional environment variables:
 - RSS/Atom: `NEWS_RSS_FEEDS` as a comma-separated list of feed URLs.
 - Collection cadence: `COLLECTION_INTERVAL_MS` (default 900000; minimum 60000).
 
-Collector outcomes are written to `collection_runs`; authenticated administrators can inspect recent runs at `GET /v1/admin/monitoring/collection-runs`. Missing credentials are recorded as partial coverage, not as a successful connection. Platform quotas, API permissions, public availability and source terms remain in force. This is not a complete platform-wide firehose.
+Collector outcomes are written to `collection_runs`; authenticated administrators can inspect recent runs at `GET /v1/admin/monitoring/collection-runs`. Missing credentials are recorded as partial coverage, not as a successful connection. Platform quotas, API permissions, public availability and source terms remain in force. This is not a complete platform-wide firehose. This deployment is restricted to free official APIs, public endpoints and RSS feeds; no paid provider is enabled or required.
