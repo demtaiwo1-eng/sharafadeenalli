@@ -46,13 +46,13 @@ function validUrl(value) {
 
 const exactSarafadeenTag = /(^|[^\p{L}\p{N}_])#sarafadeen(?![\p{L}\p{N}_])/iu;
 let sourceSyncBusy = false;
-const KEYWORD_STOPWORDS = new Set(("a an the and or but if then of to in on at for from by with as is are was were be been being it its this that these those i we you they he she them our your their my me us not no yes do does did have has had can could would should will may might about into over under after before than too very just also so such there here what when where why how who which while per via de la el en ni ati fun si ko mo o".split(/\\s+/)));
+const KEYWORD_STOPWORDS = new Set(("a an the and or but if then of to in on at for from by with as is are was were be been being it its this that these those i we you they he she them our your their my me us not no yes do does did have has had can could would should will may might about into over under after before than too very just also so such there here what when where why how who which while per via de la el en ni ati fun si ko mo o".split(/\s+/)));
 function extractTextTerms(value) {
   const text = String(value || "");
-  const hashtags = [...text.matchAll(/(^|[^\\p{L}\\p{N}_])(#[\\p{L}\\p{N}_]{2,100})/gu)].map(m => m[2]);
-  const words = (text.toLocaleLowerCase("en-NG").match(/[\\p{L}\\p{N}][\\p{L}\\p{N}'’-]{1,48}/gu) || [])
+  const hashtags = [...text.matchAll(/(^|[^\p{L}\p{N}_])(#[\p{L}\p{N}_]{2,100})/gu)].map(m => m[2]);
+  const words = (text.toLocaleLowerCase("en-NG").match(/[\p{L}\p{N}][\p{L}\p{N}'’-]{1,48}/gu) || [])
     .map(word => word.replace(/^['’-]+|['’-]+$/g, ""))
-    .filter(word => word.length > 2 && !KEYWORD_STOPWORDS.has(word) && !/^\\d+$/.test(word));
+    .filter(word => word.length > 2 && !KEYWORD_STOPWORDS.has(word) && !/^\d+$/.test(word));
   const counts = new Map();
   for (const word of words) counts.set("word:" + word, (counts.get("word:" + word) || 0) + 1);
   for (let i = 0; i < words.length - 1; i++) {
