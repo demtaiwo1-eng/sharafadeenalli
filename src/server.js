@@ -5,6 +5,7 @@ const { rateLimit } = require("express-rate-limit");
 const { Pool } = require("pg");
 const { getIntegrationCatalog } = require("./integrations/catalog");
 const { MONITORING_SCOPE } = require("./config/monitoring-scope");
+const { aggregatePosts, buildReport } = require("./analytics/engine");
 
 const app = express();
 const port = Number(process.env.PORT || 8080);
@@ -282,6 +283,41 @@ app.get("/v1/monitoring/summary", dbRequired, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+
+const ANALYTICS_TYPES = new Set(["trend","sentiment","issue_map","swot","pestle","risk","evidence_review"]);
+async function generateMonitoringReport(type, days) {
+  const result = await pool.query(
+    "SELECT id, platform, post_url, post_text AS text, published_at, ingested_at FROM social_posts WHERE published_at >= NOW() - ($1::int * INTERVAL '1 day') AND verification_status <> 'excluded' UNION ALL SELECT id, platform, post_url, content AS text, published_at, ingested_at FROM social_threads WHERE published_at >= NOW() - ($1::int * INTERVAL '1 day') ORDER BY published_at DESC NULLS LAST LIMIT 5000",
+    [days]
+  );
+  const aggregate = aggregatePosts(result.rows);
+  return buildReport(type, aggregate, days);
+}
+
+app.get("/v1/monitoring/analytics", dbRequired, async (req, res, next) => {
+  try {
+    const type = String(req.query.type || "issue_map").toLowerCase();
+    const days = Math.min(Math.max(Number.parseInt(req.query.days, 10) || 30, 1), 180);
+    if (!ANALYTICS_TYPES.has(type)) return res.status(400).json({ error: "unsupported_report_type", supported: [...ANALYTICS_TYPES] });
+    const report = await generateMonitoringReport(type, days);
+    res.set("Cache-Control", "no-store");
+    res.json({ ...report, generatedAt: new Date().toISOString() });
+  } catch (error) { next(error); }
+});
+
+app.post("/v1/admin/analytics/reports", dbRequired, adminRequired, async (req, res, next) => {
+  try {
+    const type = String(req.body?.type || "").toLowerCase();
+    const days = Math.min(Math.max(Number.parseInt(req.body?.days, 10) || 30, 1), 180);
+    if (!ANALYTICS_TYPES.has(type)) return res.status(400).json({ error: "unsupported_report_type", supported: [...ANALYTICS_TYPES] });
+    const report = await generateMonitoringReport(type, days);
+    const saved = await pool.query(
+      "INSERT INTO analytics_reports (report_type, title, scope, period_start, period_end, methodology, findings, limitations) VALUES ($1,$2,$3::jsonb,NOW()-($4::int*INTERVAL '1 day'),NOW(),$5::jsonb,$6::jsonb,$7) RETURNING id, generated_at",
+      [type, report.title, JSON.stringify(report.scope), days, JSON.stringify(report.methodology), JSON.stringify(report.findings), report.limitations.join(" ")]
+    );
+    res.status(201).json({ ...report, saved: saved.rows[0] });
+  } catch (error) { next(error); }
+});
 
 app.get("/v1/monitoring/keywords", dbRequired, async (req, res, next) => {
   try {
