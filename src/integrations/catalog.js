@@ -38,6 +38,8 @@ function isConfigured(id, env) {
   if (id === "youtube") return Boolean(env.YOUTUBE_API_KEY || (env.YOUTUBE_CLIENT_ID && env.YOUTUBE_CLIENT_SECRET && env.YOUTUBE_REFRESH_TOKEN));
   if (id === "telegram") return Boolean(env.TELEGRAM_BOT_TOKEN || (env.TELEGRAM_API_ID && env.TELEGRAM_API_HASH));
   if (id === "government_open_data") return Boolean(env.GOVERNMENT_DATA_API_KEY || env.INEC_API_BASE_URL);
+  if (item.auth === "public_api") return false;
+  if (item.auth === "aggregator_only" || item.auth === "rss_or_aggregator") return item.env.some(key => Boolean(env[key]));
   return item.env.every(key => Boolean(env[key]));
 }
 
@@ -46,7 +48,7 @@ function getIntegrationCatalog(env = process.env) {
     ...item,
     configured: isConfigured(item.id, env),
     requiredEnvironment: requiredEnv,
-    connectionStatus: isConfigured(item.id, env) ? "configured_not_tested" : "not_configured"
+    connectionStatus: item.auth === "public_api" ? "public_access_unverified" : (isConfigured(item.id, env) ? "configured_not_tested" : "not_configured")
   }));
 }
 
