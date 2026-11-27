@@ -27,7 +27,7 @@ jobs:
           const { getIntegrationCatalog } = require('./src/integrations/catalog');
           const entries = getIntegrationCatalog({});
           const ids = entries.map(entry => entry.id);
-          assert.equal(entries.length, 29, 'expected all 29 integration entries');
+          assert.equal(entries.length, 30, 'expected all 30 integration entries');
           assert.equal(new Set(ids).size, ids.length, 'integration IDs must be unique');
           for (const entry of entries) {
             assert.ok(entry.name && entry.docs && entry.kind, 'each integration needs a name, docs URL and category');
