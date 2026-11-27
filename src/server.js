@@ -46,12 +46,50 @@ function validUrl(value) {
 
 const exactSarafadeenTag = /(^|[^\p{L}\p{N}_])#sarafadeen(?![\p{L}\p{N}_])/iu;
 let sourceSyncBusy = false;
+const KEYWORD_STOPWORDS = new Set(("a an the and or but if then of to in on at for from by with as is are was were be been being it its this that these those i we you they he she them our your their my me us not no yes do does did have has had can could would should will may might about into over under after before than too very just also so such there here what when where why how who which while per via de la el en ni ati fun si ko mo o".split(/\\s+/)));
+function extractTextTerms(value) {
+  const text = String(value || "");
+  const hashtags = [...text.matchAll(/(^|[^\\p{L}\\p{N}_])(#[\\p{L}\\p{N}_]{2,100})/gu)].map(m => m[2]);
+  const words = (text.toLocaleLowerCase("en-NG").match(/[\\p{L}\\p{N}][\\p{L}\\p{N}'’-]{1,48}/gu) || [])
+    .map(word => word.replace(/^['’-]+|['’-]+$/g, ""))
+    .filter(word => word.length > 2 && !KEYWORD_STOPWORDS.has(word) && !/^\\d+$/.test(word));
+  const counts = new Map();
+  for (const word of words) counts.set("word:" + word, (counts.get("word:" + word) || 0) + 1);
+  for (let i = 0; i < words.length - 1; i++) {
+    if (KEYWORD_STOPWORDS.has(words[i]) || KEYWORD_STOPWORDS.has(words[i + 1])) continue;
+    const phrase = words[i] + " " + words[i + 1];
+    counts.set("phrase:" + phrase, (counts.get("phrase:" + phrase) || 0) + 1);
+  }
+  for (const tag of hashtags) counts.set("hashtag:" + tag.toLowerCase(), (counts.get("hashtag:" + tag.toLowerCase()) || 0) + 1);
+  return [...counts.entries()].map(([key, occurrences]) => {
+    const split = key.indexOf(":");
+    return { termType: key.slice(0, split), normalized: key.slice(split + 1), occurrences };
+  });
+}
+async function indexPostTerms(postId, platform, text) {
+  const terms = extractTextTerms(text);
+  for (const term of terms) {
+    const keyword = term.normalized.slice(0, 160);
+    await pool.query(
+      "INSERT INTO post_keywords (source_post_id, platform, keyword, normalized_keyword, term_type, occurrences) VALUES ($1,$2,$3,$3,$4,$5) ON CONFLICT (source_post_id, normalized_keyword, term_type) WHERE source_post_id IS NOT NULL DO UPDATE SET occurrences=EXCLUDED.occurrences, extracted_at=NOW()",
+      [postId, platform, keyword, term.termType, term.occurrences]
+    );
+    if (term.termType === "hashtag") {
+      const label = "#" + keyword.replace(/^#/, "");
+      await pool.query(
+        "INSERT INTO discovered_hashtags (platform, hashtag, normalized_hashtag, source_post_id, occurrence_count) VALUES ($1,$2,$3,$4,$5)",
+        [platform, label, term.normalized.replace(/^#/, ""), postId, term.occurrences]
+      );
+    }
+  }
+}
 async function storeSocialPost({ platform, externalId, postUrl, authorHandle, postText, publishedAt }) {
   if (!exactSarafadeenTag.test(postText || "") || !postUrl || !publishedAt) return false;
   const result = await pool.query(
-    "INSERT INTO social_posts (platform, external_id, post_url, author_handle, post_text, published_at, matched_hashtags) VALUES ($1,$2,$3,$4,$5,$6,ARRAY['#sarafadeen']::TEXT[]) ON CONFLICT DO NOTHING",
+    "INSERT INTO social_posts (platform, external_id, post_url, author_handle, post_text, published_at, matched_hashtags) VALUES ($1,$2,$3,$4,$5,$6,ARRAY['#sarafadeen']::TEXT[]) ON CONFLICT DO NOTHING RETURNING id",
     [platform, externalId, postUrl, String(authorHandle || "").slice(0,160), postText, publishedAt]
   );
+  if (result.rowCount === 1) await indexPostTerms(result.rows[0].id, platform, postText);
   return result.rowCount === 1;
 }
 async function syncPublicSources() {
@@ -174,6 +212,19 @@ app.get("/v1/monitoring/summary", dbRequired, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+
+app.get("/v1/monitoring/keywords", dbRequired, async (req, res, next) => {
+  try {
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 40, 1), 100);
+    const [keywords, hashtags, coverage] = await Promise.all([
+      pool.query("SELECT normalized_keyword AS keyword, term_type AS \\"termType\\", SUM(occurrences)::int AS occurrences, COUNT(DISTINCT source_post_id)::int AS posts FROM post_keywords WHERE source_post_id IS NOT NULL GROUP BY normalized_keyword, term_type ORDER BY posts DESC, occurrences DESC LIMIT $1", [limit]),
+      pool.query("SELECT normalized_hashtag AS hashtag, SUM(occurrence_count)::int AS occurrences, COUNT(DISTINCT source_post_id)::int AS posts, MAX(last_seen_at) AS \\"lastSeenAt\\" FROM discovered_hashtags WHERE source_post_id IS NOT NULL GROUP BY normalized_hashtag ORDER BY posts DESC, occurrences DESC LIMIT $1", [limit]),
+      pool.query("SELECT platform, COUNT(*)::int AS indexed_posts FROM post_keywords WHERE source_post_id IS NOT NULL GROUP BY platform ORDER BY indexed_posts DESC")
+    ]);
+    res.set("Cache-Control", "no-store");
+    res.json({ keywords: keywords.rows, hashtags: hashtags.rows, indexedPostsByPlatform: coverage.rows, methodology: "Frequency-based extraction of words, adjacent two-word phrases and hashtags from collected public posts. Not semantic understanding or sentiment analysis.", generatedAt: new Date().toISOString() });
+  } catch (error) { next(error); }
+});
 
 app.get("/v1/monitoring/hashtag", dbRequired, async (req, res, next) => {
   try {
