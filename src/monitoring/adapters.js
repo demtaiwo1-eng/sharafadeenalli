@@ -1,4 +1,4 @@
-const ANCHOR = /(^|[^\\p{L}\\p{N}_])(?:#sarafadeen(?:alli)?|sarafadeen(?:\\s+alli)?)(?![\\p{L}\\p{N}_])/iu;
+const ANCHOR = /(^|[^\p{L}\p{N}_])(?:#sarafadeen(?:alli)?|sarafadeen(?:\s+alli)?)(?![\p{L}\p{N}_])/iu;
 const DEFAULT_QUERY = '"Sarafadeen" OR "Sarafadeen Alli"';
 
 async function fetchJson(url, options = {}) {
@@ -11,16 +11,16 @@ async function fetchJson(url, options = {}) {
   return response.json();
 }
 function cleanHtml(value = "") {
-  return String(value).replace(/<script[\\s\\S]*?<\\/script>/gi, " ")
-    .replace(/<style[\\s\\S]*?<\\/style>/gi, " ")
+  return String(value).replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<[^>]+>/g, " ").replace(/&amp;/g,"&").replace(/&lt;/g,"<")
     .replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&#39;|&apos;/g,"'")
-    .replace(/&#(\\d+);/g,(_,n)=>String.fromCodePoint(Number(n))).replace(/\\s+/g," ").trim();
+    .replace(/&#(\d+);/g,(_,n)=>String.fromCodePoint(Number(n))).replace(/\s+/g," ").trim();
 }
 function xmlValue(block, names) {
   for (const name of names) {
     const match = block.match(new RegExp("<" + name + "(?:\\s[^>]*)?>([\\s\\S]*?)</" + name + ">", "i"));
-    if (match) return cleanHtml(match[1].replace(/^<!\\[CDATA\\[|\\]\\]>$/g,""));
+    if (match) return cleanHtml(match[1].replace(/^<!\[CDATA\[|\]\]>$/g,""));
   }
   return "";
 }
@@ -88,7 +88,7 @@ async function youtube() {
 }
 
 async function mastodon() {
-  const instance=String(process.env.MASTODON_INSTANCE_URL || "").replace(/\\/$/,"");
+  const instance=String(process.env.MASTODON_INSTANCE_URL || "").replace(/\/$/,"");
   if (!instance) return { configured:false, posts:[], note:"MASTODON_INSTANCE_URL is not configured." };
   const headers=process.env.MASTODON_ACCESS_TOKEN ? { Authorization:"Bearer "+process.env.MASTODON_ACCESS_TOKEN } : {};
   const data=await fetchJson(instance+"/api/v1/timelines/tag/Sarafadeen?limit=40", { headers });
@@ -106,11 +106,11 @@ async function rss() {
       const response=await fetch(url, { headers:{ Accept:"application/atom+xml, application/rss+xml, application/xml, text/xml" }, signal:AbortSignal.timeout(10000) });
       if (!response.ok) continue;
       const xml=await response.text();
-      const blocks=[...xml.matchAll(/<(item|entry)\\b[^>]*>([\\s\\S]*?)<\\/\\1>/gi)];
+      const blocks=[...xml.matchAll(/<(item|entry)\b[^>]*>([\s\S]*?)<\/\1>/gi)];
       for (const match of blocks) {
         const block=match[2], title=xmlValue(block,["title"]), description=xmlValue(block,["description","summary","content"]), text=[title,description].filter(Boolean).join("\\n");
         if (!exactAnchor(text)) continue;
-        const linkMatch=block.match(/<link(?:\\s+[^>]*)?href=["']([^"']+)["'][^>]*\\/?\\s*>|<link[^>]*>(https?:[^<]+)<\\/link>/i);
+        const linkMatch=block.match(/<link(?:\s+[^>]*)?href=["']([^"']+)["'][^>]*\/?\s*>|<link[^>]*>(https?:[^<]+)<\/link>/i);
         const link=linkMatch?.[1] || linkMatch?.[2] || xmlValue(block,["guid","id"]);
         const date=xmlValue(block,["pubDate","published","updated","dc:date"]);
         posts.push({ id:link || title, text, url:link, author:xmlValue(block,["author","dc:creator"]), publishedAt:date ? new Date(date).toISOString() : null, replies:[] });
