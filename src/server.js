@@ -10,7 +10,7 @@ const adminToken = process.env.ADMIN_API_TOKEN;
 const origins = (process.env.CORS_ORIGIN || "").split(",").map(v => v.trim()).filter(Boolean);
 const pool = process.env.DATABASE_URL ? new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false },
+  ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: true },
   max: Number(process.env.PG_POOL_MAX || 10),
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000
