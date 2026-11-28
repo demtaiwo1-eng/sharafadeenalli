@@ -27,7 +27,7 @@ app.use(helmet());
 app.use(cors({ origin(origin, cb) {
   if (!origin || origins.includes(origin)) return cb(null, true);
   return cb(new Error("Origin not allowed"));
-}, methods: ["GET", "POST", "OPTIONS"], allowedHeaders: ["Content-Type", "Authorization"] }));
+}, methods: ["GET", "POST", "DELETE", "OPTIONS"], allowedHeaders: ["Content-Type", "Authorization"] }));
 app.use(express.json({ limit: "64kb" }));
 app.use("/v1", rateLimit({ windowMs: 60000, limit: 120, standardHeaders: "draft-7", legacyHeaders: false }));
 
@@ -212,6 +212,31 @@ async function storeExternalReply(reply, rootPostId, platform, parentExternalId)
   }
   return true;
 }
+
+async function getOAuthAccessToken(provider) {
+  if(!pool)return null;
+  const result=await pool.query("SELECT access_token_ciphertext,refresh_token_ciphertext,expires_at FROM oauth_connections WHERE provider=$1",[provider]);
+  if(!result.rowCount)return null;
+  const row=result.rows[0];
+  const expired=row.expires_at && new Date(row.expires_at).getTime()<Date.now()+120000;
+  if(!expired || !row.refresh_token_ciphertext)return decryptSecret(row.access_token_ciphertext);
+  const p=OAUTH_PROVIDERS[provider];
+  if(!p)return decryptSecret(row.access_token_ciphertext);
+  const refreshToken=decryptSecret(row.refresh_token_ciphertext);
+  const body=new URLSearchParams({grant_type:"refresh_token",refresh_token:refreshToken});
+  if(provider==="tiktok")body.set("client_key",process.env[p.client]);else body.set("client_id",process.env[p.client]);
+  if(process.env[p.secret])body.set("client_secret",process.env[p.secret]);
+  const headers={"Content-Type":"application/x-www-form-urlencoded",Accept:"application/json"};
+  if(p.auth==="basic"&&process.env[p.secret"])headers.Authorization="Basic "+Buffer.from(process.env[p.client]+":"+process.env[p.secret]).toString("base64");
+  const response=await fetch(p.token,{method:"POST",headers,body,signal:AbortSignal.timeout(12000)});
+  const token=await response.json().catch(()=>({}));
+  if(!response.ok||!token.access_token)throw new Error(provider+"_oauth_refresh_failed");
+  const expiresAt=token.expires_in?new Date(Date.now()+Number(token.expires_in)*1000).toISOString():null;
+  await pool.query("UPDATE oauth_connections SET access_token_ciphertext=$2,refresh_token_ciphertext=$3,expires_at=$4,updated_at=NOW() WHERE provider=$1",
+    [provider,encryptSecret(token.access_token),token.refresh_token?encryptSecret(token.refresh_token):row.refresh_token_ciphertext,expiresAt]);
+  return token.access_token;
+}
+
 async function runConfiguredAdapter(name) {
   const started=await pool.query(
     "INSERT INTO collection_runs (platform, collection_type, query_label, status, coverage_note) VALUES ($1,$2,$3,'running','Adapter collection started; coverage is limited to configured provider permissions and API results.') RETURNING id",
@@ -220,7 +245,8 @@ async function runConfiguredAdapter(name) {
   const runId=started.rows[0].id;
   let seen=0, replies=0, errors=0, status="succeeded", note="";
   try {
-    const result=await runAdapter(name);
+    const oauthToken=await getOAuthAccessToken(name);
+    const result=await runAdapter(name,{accessToken:oauthToken});
     note=result.note || "";
     for(const item of result.posts || []) {
       if(!item.url || !validUrl(item.url) || !item.publishedAt || Number.isNaN(Date.parse(item.publishedAt))) continue;
@@ -303,10 +329,12 @@ async function syncPublicSources() {
       return {postsSeen,repliesSeen,note:"Bluesky public search and up to two new reply threads per collection cycle; thread depth is capped at six."};
     });
     await withCollectionRun("x","search",async()=>{
-      if(!process.env.X_BEARER_TOKEN)return {configured:false,note:"X_BEARER_TOKEN is not configured."};
+      const xAccessToken=await getOAuthAccessToken("x");
+      const bearer=xAccessToken||process.env.X_BEARER_TOKEN;
+      if(!bearer)return {configured:false,note:"Connect X through OAuth or configure X_BEARER_TOKEN. Read access may require a paid developer entitlement."};
       const params=new URLSearchParams({query:"Sarafadeen",max_results:"100","tweet.fields":"created_at,author_id","expansions":"author_id","user.fields":"username"});
       const response=await fetch("https://api.x.com/2/tweets/search/recent?"+params.toString(),{
-        signal:AbortSignal.timeout(8000),headers:{Authorization:"Bearer "+process.env.X_BEARER_TOKEN,Accept:"application/json"}
+        signal:AbortSignal.timeout(8000),headers:{Authorization:"Bearer "+bearer,Accept:"application/json"}
       });
       if(!response.ok){const error=new Error("x_http_"+response.status);error.status=response.status;throw error;}
       const data=await response.json(),authors=new Map((data.includes?.users||[]).map(user=>[user.id,user.username]));
