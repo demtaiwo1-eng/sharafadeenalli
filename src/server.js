@@ -559,6 +559,133 @@ app.post("/v1/admin/updates", dbRequired, adminRequired, async (req, res, next) 
   } catch (error) { next(error); }
 });
 
+
+
+// --- Secure, server-side social account authorization (OAuth 2.0 + PKCE) ---
+const crypto = require("node:crypto");
+const OAUTH_REDIRECT_URI = process.env.OAUTH_REDIRECT_URI || "";
+const OAUTH_FRONTEND_URL = process.env.OAUTH_FRONTEND_URL || "https://demtaiwo1-eng.github.io/sharafadeenalli.github.io/";
+const TOKEN_KEY_TEXT = process.env.OAUTH_TOKEN_ENCRYPTION_KEY || "";
+function tokenKey() {
+  let key;
+  if (/^[a-f0-9]{64}$/i.test(TOKEN_KEY_TEXT)) key = Buffer.from(TOKEN_KEY_TEXT, "hex");
+  else { try { key = Buffer.from(TOKEN_KEY_TEXT, "base64"); } catch {} }
+  return key && key.length === 32 ? key : null;
+}
+function encryptSecret(value) {
+  const key = tokenKey();
+  if (!key) throw new Error("oauth_encryption_key_not_configured");
+  const iv = crypto.randomBytes(12), cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const encrypted = Buffer.concat([cipher.update(String(value), "utf8"), cipher.final()]);
+  return [iv.toString("base64url"), cipher.getAuthTag().toString("base64url"), encrypted.toString("base64url")].join(".");
+}
+function decryptSecret(value) {
+  const key = tokenKey();
+  if (!key) throw new Error("oauth_encryption_key_not_configured");
+  const [iv, tag, body] = String(value).split(".");
+  const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(iv, "base64url"));
+  decipher.setAuthTag(Buffer.from(tag, "base64url"));
+  return Buffer.concat([decipher.update(Buffer.from(body, "base64url")), decipher.final()]).toString("utf8");
+}
+const OAUTH_PROVIDERS = {
+  x: { label:"X", client:"X_OAUTH_CLIENT_ID", secret:"X_OAUTH_CLIENT_SECRET", authorize:"https://twitter.com/i/oauth2/authorize", token:"https://api.x.com/2/oauth2/token", scopes:["tweet.read","users.read","offline.access"], auth:"basic", pkce:true },
+  reddit: { label:"Reddit", client:"REDDIT_OAUTH_CLIENT_ID", secret:"REDDIT_OAUTH_CLIENT_SECRET", authorize:"https://www.reddit.com/api/v1/authorize", token:"https://www.reddit.com/api/v1/access_token", scopes:["identity","read"], auth:"basic", pkce:true, extra:{duration:"permanent"} },
+  youtube: { label:"YouTube / Google", client:"GOOGLE_OAUTH_CLIENT_ID", secret:"GOOGLE_OAUTH_CLIENT_SECRET", authorize:"https://accounts.google.com/o/oauth2/v2/auth", token:"https://oauth2.googleapis.com/token", scopes:["https://www.googleapis.com/auth/youtube.readonly"], auth:"body", pkce:true, extra:{access_type:"offline",prompt:"consent"} },
+  facebook: { label:"Facebook", client:"META_APP_ID", secret:"META_APP_SECRET", authorize:"https://www.facebook.com/v22.0/dialog/oauth", token:"https://graph.facebook.com/v22.0/oauth/access_token", scopes:["public_profile","pages_show_list","pages_read_engagement"], auth:"body", pkce:false },
+  instagram: { label:"Instagram", client:"META_APP_ID", secret:"META_APP_SECRET", authorize:"https://www.facebook.com/v22.0/dialog/oauth", token:"https://graph.facebook.com/v22.0/oauth/access_token", scopes:["instagram_basic","instagram_manage_comments"], auth:"body", pkce:false },
+  threads: { label:"Threads", client:"THREADS_APP_ID", secret:"THREADS_APP_SECRET", authorize:"https://threads.net/oauth/authorize", token:"https://graph.threads.net/oauth/access_token", scopes:["threads_basic","threads_read_replies"], auth:"body", pkce:false },
+  tiktok: { label:"TikTok", client:"TIKTOK_CLIENT_KEY", secret:"TIKTOK_CLIENT_SECRET", authorize:"https://www.tiktok.com/v2/auth/authorize/", token:"https://open.tiktokapis.com/v2/oauth/token/", scopes:["user.info.basic","video.list"], auth:"body", pkce:true },
+  linkedin: { label:"LinkedIn", client:"LINKEDIN_CLIENT_ID", secret:"LINKEDIN_CLIENT_SECRET", authorize:"https://www.linkedin.com/oauth/v2/authorization", token:"https://www.linkedin.com/oauth/v2/accessToken", scopes:["openid","profile"], auth:"body", pkce:true },
+  mastodon: { label:"Mastodon", client:"MASTODON_OAUTH_CLIENT_ID", secret:"MASTODON_OAUTH_CLIENT_SECRET", authorize:"https://mastodon.social/oauth/authorize", token:"https://mastodon.social/oauth/token", scopes:["read"], auth:"body", pkce:true }
+};
+function oauthRedirectUri() {
+  if (!OAUTH_REDIRECT_URI || !OAUTH_REDIRECT_URI.startsWith("https://")) throw new Error("oauth_redirect_uri_https_required");
+  return OAUTH_REDIRECT_URI;
+}
+function configuredOAuthProviders() {
+  return Object.entries(OAUTH_PROVIDERS).map(([id,p]) => ({
+    id, label:p.label, configured:Boolean(process.env[p.client] && (p.auth!=="basic" || process.env[p.secret])),
+    connected:false, scopes:p.scopes,
+    note: id==="x" ? "API read access may require a paid X developer entitlement; no paid plan will be activated." :
+      id==="linkedin" ? "Basic identity scopes only; broader organisation/member content requires LinkedIn approval." :
+      ["facebook","instagram","threads","tiktok"].includes(id) ? "Provider app review and permission approval may be required." :
+      "Access is subject to the provider's free API quota, app approval and current terms."
+  }));
+}
+app.get("/v1/auth/connections", dbRequired, adminRequired, async (req,res,next) => {
+  try {
+    const result=await pool.query("SELECT provider, scopes, expires_at, connected_at, updated_at FROM oauth_connections ORDER BY provider");
+    const connected=new Map(result.rows.map(row=>[row.provider,row]));
+    res.set("Cache-Control","no-store");
+    res.json({ providers:configuredOAuthProviders().map(p=>({...p,connected:connected.has(p.id), ...(connected.has(p.id)?{expiresAt:connected.get(p.id).expires_at,connectedAt:connected.get(p.id).connected_at,grantedScopes:connected.get(p.id).scopes}:{})})), redirectUri:OAUTH_REDIRECT_URI || null });
+  } catch(error){next(error);}
+});
+app.post("/v1/auth/connect/:provider", dbRequired, adminRequired, async (req,res,next) => {
+  try {
+    const provider=String(req.params.provider||"").toLowerCase(), p=OAUTH_PROVIDERS[provider];
+    if(!p)return res.status(404).json({error:"unsupported_oauth_provider"});
+    if(!process.env[p.client] || (p.auth==="basic" && !process.env[p.secret])) return res.status(503).json({error:"provider_oauth_app_not_configured",required:[p.client,...(p.auth==="basic"?[p.secret]:[])]});
+    if(!tokenKey())return res.status(503).json({error:"oauth_encryption_key_not_configured"});
+    const redirectUri=oauthRedirectUri();
+    const state=crypto.randomBytes(32).toString("base64url");
+    const verifier=crypto.randomBytes(48).toString("base64url");
+    const challenge=crypto.createHash("sha256").update(verifier).digest("base64url");
+    await pool.query("DELETE FROM oauth_states WHERE expires_at < NOW()");
+    await pool.query("INSERT INTO oauth_states(state_hash,provider,code_verifier_ciphertext,expires_at) VALUES($1,$2,$3,NOW()+INTERVAL '10 minutes')",[crypto.createHash("sha256").update(state).digest("hex"),provider,encryptSecret(verifier)]);
+    const url=new URL(p.authorize);
+    const params={response_type:"code",client_id:process.env[p.client],redirect_uri:redirectUri,scope:p.scopes.join(" "),state};
+    if(p.pkce){params.code_challenge=challenge;params.code_challenge_method="S256";}
+    if(p.extra)Object.assign(params,p.extra);
+    if(provider==="tiktok")params.client_key=process.env[p.client];
+    for(const [k,v] of Object.entries(params))url.searchParams.set(k,v);
+    res.set("Cache-Control","no-store");
+    res.json({authorizationUrl:url.toString(),provider,expiresIn:600});
+  } catch(error){next(error);}
+});
+app.get("/v1/auth/callback", dbRequired, async (req,res) => {
+  const frontend=new URL(OAUTH_FRONTEND_URL);
+  frontend.hash="integrations";
+  try {
+    const code=String(req.query.code||""), state=String(req.query.state||"");
+    if(req.query.error)throw new Error("provider_authorization_declined");
+    if(!code || !state || state.length>256)throw new Error("invalid_oauth_callback");
+    const stateHash=crypto.createHash("sha256").update(state).digest("hex");
+    const found=await pool.query("DELETE FROM oauth_states WHERE state_hash=$1 AND expires_at>NOW() RETURNING provider,code_verifier_ciphertext",[stateHash]);
+    if(!found.rowCount)throw new Error("oauth_state_expired_or_invalid");
+    const provider=found.rows[0].provider,p=OAUTH_PROVIDERS[provider];
+    const redirectUri=oauthRedirectUri();
+    const body=new URLSearchParams({grant_type:"authorization_code",code,redirect_uri:redirectUri});
+    if(provider==="tiktok")body.set("client_key",process.env[p.client]);
+    else body.set("client_id",process.env[p.client]);
+    if(process.env[p.secret])body.set("client_secret",process.env[p.secret]);
+    if(p.pkce)body.set("code_verifier",decryptSecret(found.rows[0].code_verifier_ciphertext));
+    const headers={"Content-Type":"application/x-www-form-urlencoded",Accept:"application/json"};
+    if(p.auth==="basic" && process.env[p.secret])headers.Authorization="Basic "+Buffer.from(process.env[p.client]+":"+process.env[p.secret]).toString("base64");
+    const response=await fetch(p.token,{method:"POST",headers,body,signal:AbortSignal.timeout(15000)});
+    const token=await response.json().catch(()=>({}));
+    if(!response.ok || !token.access_token)throw new Error("provider_token_exchange_failed");
+    const scopes=String(token.scope||token.scopes||"").split(/[ ,]+/).filter(Boolean);
+    const expiresAt=token.expires_in?new Date(Date.now()+Number(token.expires_in)*1000).toISOString():null;
+    await pool.query(
+      "INSERT INTO oauth_connections(provider,access_token_ciphertext,refresh_token_ciphertext,token_type,scopes,expires_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(provider) DO UPDATE SET access_token_ciphertext=EXCLUDED.access_token_ciphertext,refresh_token_ciphertext=EXCLUDED.refresh_token_ciphertext,token_type=EXCLUDED.token_type,scopes=EXCLUDED.scopes,expires_at=EXCLUDED.expires_at,updated_at=NOW()",
+      [provider,encryptSecret(token.access_token),token.refresh_token?encryptSecret(token.refresh_token):null,String(token.token_type||"Bearer"),scopes,expiresAt]
+    );
+    frontend.searchParams.set("oauth","connected");frontend.searchParams.set("provider",provider);
+  } catch(error) {
+    frontend.searchParams.set("oauth","error");
+    frontend.searchParams.set("reason",String(error.message||"authorization_failed").slice(0,100));
+  }
+  return res.redirect(303,frontend.toString());
+});
+app.delete("/v1/auth/connections/:provider", dbRequired, adminRequired, async(req,res,next)=>{
+  try{
+    const provider=String(req.params.provider||"").toLowerCase();
+    if(!OAUTH_PROVIDERS[provider])return res.status(404).json({error:"unsupported_oauth_provider"});
+    await pool.query("DELETE FROM oauth_connections WHERE provider=$1",[provider]);
+    res.json({disconnected:true,provider});
+  }catch(error){next(error);}
+});
+
 app.use((req, res) => res.status(404).json({ error: "not_found" }));
 app.use((error, req, res, next) => {
   if (res.headersSent) return next(error);
