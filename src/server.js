@@ -227,7 +227,7 @@ async function getOAuthAccessToken(provider) {
   if(provider==="tiktok")body.set("client_key",process.env[p.client]);else body.set("client_id",process.env[p.client]);
   if(process.env[p.secret])body.set("client_secret",process.env[p.secret]);
   const headers={"Content-Type":"application/x-www-form-urlencoded",Accept:"application/json"};
-  if(p.auth==="basic"&&process.env[p.secret"])headers.Authorization="Basic "+Buffer.from(process.env[p.client]+":"+process.env[p.secret]).toString("base64");
+  if(p.auth==="basic"&&process.env[p.secret])headers.Authorization="Basic "+Buffer.from(process.env[p.client]+":"+process.env[p.secret]).toString("base64");
   const response=await fetch(p.token,{method:"POST",headers,body,signal:AbortSignal.timeout(12000)});
   const token=await response.json().catch(()=>({}));
   if(!response.ok||!token.access_token)throw new Error(provider+"_oauth_refresh_failed");
