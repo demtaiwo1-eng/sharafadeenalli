@@ -26,16 +26,20 @@ function xmlValue(block, names) {
 }
 function exactAnchor(text) { return ANCHOR.test(String(text || "")); }
 
-async function reddit() {
+async function reddit(oauthAccessToken) {
   const { REDDIT_CLIENT_ID:id, REDDIT_CLIENT_SECRET:secret, REDDIT_USER_AGENT:agent, REDDIT_REFRESH_TOKEN:refresh } = process.env;
-  if (!id || !secret || !agent || !refresh) return { configured:false, posts:[], note:"OAuth client, user agent and refresh token are required." };
-  const basic = Buffer.from(id + ":" + secret).toString("base64");
-  const tokenData = await fetchJson("https://www.reddit.com/api/v1/access_token", {
-    method:"POST", headers:{ Authorization:"Basic " + basic, "Content-Type":"application/x-www-form-urlencoded", "User-Agent":agent },
-    body:new URLSearchParams({ grant_type:"refresh_token", refresh_token:refresh }).toString()
-  });
-  if (!tokenData.access_token) throw new Error("reddit_token_not_returned");
-  const headers = { Authorization:"Bearer " + tokenData.access_token, "User-Agent":agent };
+  if (!oauthAccessToken && (!id || !secret || !agent || !refresh)) return { configured:false, posts:[], note:"Connect Reddit with OAuth or configure its client, user agent and refresh token." };
+  let accessToken=oauthAccessToken;
+  if(!accessToken){
+    const basic = Buffer.from(id + ":" + secret).toString("base64");
+    const tokenData = await fetchJson("https://www.reddit.com/api/v1/access_token", {
+      method:"POST", headers:{ Authorization:"Basic " + basic, "Content-Type":"application/x-www-form-urlencoded", "User-Agent":agent },
+      body:new URLSearchParams({ grant_type:"refresh_token", refresh_token:refresh }).toString()
+    });
+    accessToken=tokenData.access_token;
+  }
+  if (!accessToken) throw new Error("reddit_token_not_returned");
+  const headers = { Authorization:"Bearer " + accessToken, "User-Agent":agent||"CampTechOyoMonitor/1.0" };
   const search = await fetchJson("https://oauth.reddit.com/search?q=" + encodeURIComponent(DEFAULT_QUERY) + "&sort=new&limit=50&restrict_sr=false", { headers });
   const posts = [];
   for (const child of (search.data?.children || [])) {
@@ -63,10 +67,12 @@ async function reddit() {
   return { configured:true, posts, note:"Reddit OAuth search; comment trees are limited to provider-returned comments and a four-level traversal." };
 }
 
-async function youtube() {
+async function youtube(oauthAccessToken) {
   const key=process.env.YOUTUBE_API_KEY;
-  if (!key) return { configured:false, posts:[], note:"YOUTUBE_API_KEY is not configured." };
-  const search=await fetchJson("https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=25&q=" + encodeURIComponent("Sarafadeen Alli") + "&key=" + encodeURIComponent(key));
+  if (!key && !oauthAccessToken) return { configured:false, posts:[], note:"Connect YouTube with Google OAuth or configure YOUTUBE_API_KEY." };
+  const headers=oauthAccessToken?{Authorization:"Bearer "+oauthAccessToken}:{};
+  const keyParam=oauthAccessToken?"":"&key="+encodeURIComponent(key);
+  const search=await fetchJson("https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=25&q=" + encodeURIComponent("Sarafadeen Alli")+keyParam,{headers});
   const posts=[];
   for (const item of (search.items || [])) {
     const id=item.id?.videoId, s=item.snippet || {};
@@ -75,7 +81,7 @@ async function youtube() {
     if (!exactAnchor(text)) continue;
     const replies=[];
     try {
-      const comments=await fetchJson("https://www.googleapis.com/youtube/v3/commentThreads?part=snippet,replies&videoId=" + encodeURIComponent(id) + "&maxResults=30&textFormat=plainText&key=" + encodeURIComponent(key));
+      const comments=await fetchJson("https://www.googleapis.com/youtube/v3/commentThreads?part=snippet,replies&videoId=" + encodeURIComponent(id) + "&maxResults=30&textFormat=plainText"+keyParam,{headers});
       for (const thread of comments.items || []) {
         const top=thread.snippet?.topLevelComment?.snippet, cid=thread.snippet?.topLevelComment?.id;
         if (top && cid) replies.push({ id:cid, parentId:id, depth:1, text:top.textDisplay || "", author:top.authorDisplayName || "", url:"https://www.youtube.com/watch?v="+id+"&lc="+cid, publishedAt:top.publishedAt || null });
@@ -87,10 +93,11 @@ async function youtube() {
   return { configured:true, posts, note:"YouTube Data API search and commentThreads; API quota and comment availability apply." };
 }
 
-async function mastodon() {
+async function mastodon(oauthAccessToken) {
   const instance=String(process.env.MASTODON_INSTANCE_URL || "").replace(/\/$/,"");
   if (!instance) return { configured:false, posts:[], note:"MASTODON_INSTANCE_URL is not configured." };
-  const headers=process.env.MASTODON_ACCESS_TOKEN ? { Authorization:"Bearer "+process.env.MASTODON_ACCESS_TOKEN } : {};
+  const token=oauthAccessToken||process.env.MASTODON_ACCESS_TOKEN;
+  const headers=token ? { Authorization:"Bearer "+token } : {};
   const data=await fetchJson(instance+"/api/v1/timelines/tag/Sarafadeen?limit=40", { headers });
   return { configured:true, posts:(data || []).filter(p=>exactAnchor(cleanHtml(p.content))).map(p=>({ id:p.id, text:cleanHtml(p.content), url:p.url, author:p.account?.acct || "", publishedAt:p.created_at, replies:[] })), note:"Public hashtag timeline on the configured Mastodon instance; coverage depends on that instance." };
 }
@@ -137,8 +144,8 @@ async function gdelt() {
   return { configured: true, posts, note: "Free, keyless GDELT DOC 2.0 news search; rolling seven-day window, up to 75 articles, no comments/replies. Rate limits apply; not exhaustive." };
 }
 
-async function runAdapter(name) {
-  const adapters={ reddit, youtube, mastodon, news_rss:rss, gdelt };
+async function runAdapter(name, credentials={}) {
+  const adapters={ reddit:()=>reddit(credentials.accessToken), youtube:()=>youtube(credentials.accessToken), mastodon:()=>mastodon(credentials.accessToken), news_rss:rss, gdelt };
   if (!adapters[name]) throw new Error("unknown_adapter");
   return adapters[name]();
 }
