@@ -229,7 +229,8 @@ async function getOAuthAccessToken(provider) {
   const headers={"Content-Type":"application/x-www-form-urlencoded",Accept:"application/json"};
   if(p.auth==="basic"&&process.env[p.secret])headers.Authorization="Basic "+Buffer.from(process.env[p.client]+":"+process.env[p.secret]).toString("base64");
   const response=await fetch(p.token,{method:"POST",headers,body,signal:AbortSignal.timeout(12000)});
-  const token=await response.json().catch(()=>({}));
+  const tokenEnvelope=await response.json().catch(()=>({}));
+  const token=provider==="tiktok"?(tokenEnvelope.data||{}):tokenEnvelope;
   if(!response.ok||!token.access_token)throw new Error(provider+"_oauth_refresh_failed");
   const expiresAt=token.expires_in?new Date(Date.now()+Number(token.expires_in)*1000).toISOString():null;
   await pool.query("UPDATE oauth_connections SET access_token_ciphertext=$2,refresh_token_ciphertext=$3,expires_at=$4,updated_at=NOW() WHERE provider=$1",
@@ -690,7 +691,8 @@ app.get("/v1/auth/callback", dbRequired, async (req,res) => {
     const headers={"Content-Type":"application/x-www-form-urlencoded",Accept:"application/json"};
     if(p.auth==="basic" && process.env[p.secret])headers.Authorization="Basic "+Buffer.from(process.env[p.client]+":"+process.env[p.secret]).toString("base64");
     const response=await fetch(p.token,{method:"POST",headers,body,signal:AbortSignal.timeout(15000)});
-    const token=await response.json().catch(()=>({}));
+    const tokenEnvelope=await response.json().catch(()=>({}));
+    const token=provider==="tiktok"?(tokenEnvelope.data||{}):tokenEnvelope;
     if(!response.ok || !token.access_token)throw new Error("provider_token_exchange_failed");
     const scopes=String(token.scope||token.scopes||"").split(/[ ,]+/).filter(Boolean);
     const expiresAt=token.expires_in?new Date(Date.now()+Number(token.expires_in)*1000).toISOString():null;
