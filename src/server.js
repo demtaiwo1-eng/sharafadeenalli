@@ -617,15 +617,15 @@ function decryptSecret(value) {
   return Buffer.concat([decipher.update(Buffer.from(body, "base64url")), decipher.final()]).toString("utf8");
 }
 const OAUTH_PROVIDERS = {
-  x: { label:"X", client:"X_OAUTH_CLIENT_ID", secret:"X_OAUTH_CLIENT_SECRET", authorize:"https://twitter.com/i/oauth2/authorize", token:"https://api.x.com/2/oauth2/token", scopes:["tweet.read","users.read","offline.access"], auth:"basic", pkce:true },
-  reddit: { label:"Reddit", client:"REDDIT_OAUTH_CLIENT_ID", secret:"REDDIT_OAUTH_CLIENT_SECRET", authorize:"https://www.reddit.com/api/v1/authorize", token:"https://www.reddit.com/api/v1/access_token", scopes:["identity","read"], auth:"basic", pkce:true, extra:{duration:"permanent"} },
-  youtube: { label:"YouTube / Google", client:"GOOGLE_OAUTH_CLIENT_ID", secret:"GOOGLE_OAUTH_CLIENT_SECRET", authorize:"https://accounts.google.com/o/oauth2/v2/auth", token:"https://oauth2.googleapis.com/token", scopes:["https://www.googleapis.com/auth/youtube.readonly"], auth:"body", pkce:true, extra:{access_type:"offline",prompt:"consent"} },
-  facebook: { label:"Facebook", client:"META_APP_ID", secret:"META_APP_SECRET", authorize:"https://www.facebook.com/v22.0/dialog/oauth", token:"https://graph.facebook.com/v22.0/oauth/access_token", scopes:["public_profile","pages_show_list","pages_read_engagement"], auth:"body", pkce:false },
-  instagram: { label:"Instagram", client:"META_APP_ID", secret:"META_APP_SECRET", authorize:"https://www.facebook.com/v22.0/dialog/oauth", token:"https://graph.facebook.com/v22.0/oauth/access_token", scopes:["instagram_basic","instagram_manage_comments"], auth:"body", pkce:false },
-  threads: { label:"Threads", client:"THREADS_APP_ID", secret:"THREADS_APP_SECRET", authorize:"https://threads.net/oauth/authorize", token:"https://graph.threads.net/oauth/access_token", scopes:["threads_basic","threads_read_replies"], auth:"body", pkce:false },
-  tiktok: { label:"TikTok", client:"TIKTOK_CLIENT_KEY", secret:"TIKTOK_CLIENT_SECRET", authorize:"https://www.tiktok.com/v2/auth/authorize/", token:"https://open.tiktokapis.com/v2/oauth/token/", scopes:["user.info.basic","video.list"], auth:"body", pkce:true },
-  linkedin: { label:"LinkedIn", client:"LINKEDIN_CLIENT_ID", secret:"LINKEDIN_CLIENT_SECRET", authorize:"https://www.linkedin.com/oauth/v2/authorization", token:"https://www.linkedin.com/oauth/v2/accessToken", scopes:["openid","profile"], auth:"body", pkce:true },
-  mastodon: { label:"Mastodon", client:"MASTODON_OAUTH_CLIENT_ID", secret:"MASTODON_OAUTH_CLIENT_SECRET", authorize:"https://mastodon.social/oauth/authorize", token:"https://mastodon.social/oauth/token", scopes:["read"], auth:"body", pkce:true }
+  x: { label:"X", developerUrl:"https://developer.x.com/en/portal/dashboard", client:"X_OAUTH_CLIENT_ID", secret:"X_OAUTH_CLIENT_SECRET", authorize:"https://twitter.com/i/oauth2/authorize", token:"https://api.x.com/2/oauth2/token", scopes:["tweet.read","users.read","offline.access"], auth:"basic", pkce:true },
+  reddit: { label:"Reddit", developerUrl:"https://www.reddit.com/prefs/apps", client:"REDDIT_OAUTH_CLIENT_ID", secret:"REDDIT_OAUTH_CLIENT_SECRET", authorize:"https://www.reddit.com/api/v1/authorize", token:"https://www.reddit.com/api/v1/access_token", scopes:["identity","read"], auth:"basic", pkce:true, extra:{duration:"permanent"} },
+  youtube: { label:"YouTube / Google", developerUrl:"https://console.cloud.google.com/apis/credentials", client:"GOOGLE_OAUTH_CLIENT_ID", secret:"GOOGLE_OAUTH_CLIENT_SECRET", authorize:"https://accounts.google.com/o/oauth2/v2/auth", token:"https://oauth2.googleapis.com/token", scopes:["https://www.googleapis.com/auth/youtube.readonly"], auth:"body", pkce:true, extra:{access_type:"offline",prompt:"consent"} },
+  facebook: { label:"Facebook", developerUrl:"https://developers.facebook.com/apps/", client:"META_APP_ID", secret:"META_APP_SECRET", authorize:"https://www.facebook.com/v22.0/dialog/oauth", token:"https://graph.facebook.com/v22.0/oauth/access_token", scopes:["public_profile","pages_show_list","pages_read_engagement"], auth:"body", pkce:false },
+  instagram: { label:"Instagram", developerUrl:"https://developers.facebook.com/apps/", client:"META_APP_ID", secret:"META_APP_SECRET", authorize:"https://www.facebook.com/v22.0/dialog/oauth", token:"https://graph.facebook.com/v22.0/oauth/access_token", scopes:["instagram_basic","instagram_manage_comments"], auth:"body", pkce:false },
+  threads: { label:"Threads", developerUrl:"https://developers.facebook.com/apps/", client:"THREADS_APP_ID", secret:"THREADS_APP_SECRET", authorize:"https://threads.net/oauth/authorize", token:"https://graph.threads.net/oauth/access_token", scopes:["threads_basic","threads_read_replies"], auth:"body", pkce:false },
+  tiktok: { label:"TikTok", developerUrl:"https://developers.tiktok.com/", client:"TIKTOK_CLIENT_KEY", secret:"TIKTOK_CLIENT_SECRET", authorize:"https://www.tiktok.com/v2/auth/authorize/", token:"https://open.tiktokapis.com/v2/oauth/token/", scopes:["user.info.basic","video.list"], auth:"body", pkce:true },
+  linkedin: { label:"LinkedIn", developerUrl:"https://www.linkedin.com/developers/apps", client:"LINKEDIN_CLIENT_ID", secret:"LINKEDIN_CLIENT_SECRET", authorize:"https://www.linkedin.com/oauth/v2/authorization", token:"https://www.linkedin.com/oauth/v2/accessToken", scopes:["openid","profile"], auth:"body", pkce:true },
+  mastodon: { label:"Mastodon", developerUrl:"https://mastodon.social/settings/applications", client:"MASTODON_OAUTH_CLIENT_ID", secret:"MASTODON_OAUTH_CLIENT_SECRET", authorize:"https://mastodon.social/oauth/authorize", token:"https://mastodon.social/oauth/token", scopes:["read"], auth:"body", pkce:true }
 };
 function oauthRedirectUri() {
   if (!OAUTH_REDIRECT_URI || !OAUTH_REDIRECT_URI.startsWith("https://")) throw new Error("oauth_redirect_uri_https_required");
@@ -633,7 +633,7 @@ function oauthRedirectUri() {
 }
 function configuredOAuthProviders() {
   return Object.entries(OAUTH_PROVIDERS).map(([id,p]) => ({
-    id, label:p.label, configured:Boolean(process.env[p.client] && (p.auth!=="basic" || process.env[p.secret])),
+    id, label:p.label, developerUrl:p.developerUrl, configured:Boolean(process.env[p.client] && (p.auth!=="basic" || process.env[p.secret])),
     connected:false, scopes:p.scopes,
     note: id==="x" ? "API read access may require a paid X developer entitlement; no paid plan will be activated." :
       id==="linkedin" ? "Basic identity scopes only; broader organisation/member content requires LinkedIn approval." :
