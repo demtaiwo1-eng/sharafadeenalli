@@ -104,3 +104,35 @@ Collector outcomes are written to `collection_runs`; authenticated administrator
 - Use each platform's official OAuth/approved API authorization flow for account connections. A user must complete sign-in and consent directly with the platform.
 - Do not collect passwords, one-time codes, session cookies, or reuse browser profiles to bypass platform access controls. Selenium/Chromium can be used for public-page QA and permitted browser workflows, not as a substitute for an approved API grant or to evade platform restrictions.
 - The current collectors only access sources listed as implemented above. An integration-catalog entry is not proof that a platform is connected or that all posts/replies are available.
+
+
+### Secure social account sign-in (OAuth)
+
+The dashboard's **Social account sign-in centre** uses provider-hosted OAuth consent pages. The administrator enters the existing `ADMIN_API_TOKEN` into the page to unlock account management; the browser keeps that token in memory only and does not write it to local storage. Connect actions are protected by the admin token, short-lived one-time OAuth state and PKCE where the provider supports it.
+
+Provider access and refresh tokens are encrypted at rest with AES-256-GCM using `OAUTH_TOKEN_ENCRYPTION_KEY`. The service never stores social-media passwords, OTPs, browser cookies or copied browser profiles. The OAuth callback stores only the returned token data and granted scopes. Disconnecting removes the stored provider token.
+
+Required common Render environment:
+- `OAUTH_TOKEN_ENCRYPTION_KEY`: exactly 32 random bytes represented as 64 hexadecimal characters.
+- `OAUTH_REDIRECT_URI`: `https://camptech-oyo-api.onrender.com/v1/auth/callback` (register this exact callback URL in each provider developer app).
+- `OAUTH_FRONTEND_URL`: `https://demtaiwo1-eng.github.io/sharafadeenalli.github.io/`.
+
+Optional provider app credentials (set only in Render's private environment settings):
+- X: `X_OAUTH_CLIENT_ID`, `X_OAUTH_CLIENT_SECRET`.
+- Reddit: `REDDIT_OAUTH_CLIENT_ID`, `REDDIT_OAUTH_CLIENT_SECRET`.
+- YouTube/Google: `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`.
+- Facebook and Instagram: `META_APP_ID`, `META_APP_SECRET`.
+- Threads: `THREADS_APP_ID`, `THREADS_APP_SECRET`.
+- TikTok: `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`.
+- LinkedIn: `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`.
+- Mastodon: `MASTODON_OAUTH_CLIENT_ID`, `MASTODON_OAUTH_CLIENT_SECRET`.
+
+OAuth client registrations and permission approval are still required; they are not created automatically by this application. Use only free developer registrations and free API entitlements. X read access and some other provider capabilities may require paid API access; do not activate a paid plan. A successful OAuth sign-in confirms account authorization, not permission to collect every post or reply. Existing collectors now consume stored OAuth access tokens for X, Reddit, YouTube and Mastodon where their API permissions permit; the other providers are authorization-ready but still need their collection adapters and approved scopes before ingestion is enabled.
+
+Endpoints:
+- `GET /v1/auth/connections` — admin-authenticated connection and configuration status; never returns tokens.
+- `POST /v1/auth/connect/:provider` — admin-authenticated OAuth start; returns the provider authorization URL.
+- `GET /v1/auth/callback` — validates the one-time state and exchanges the authorization code.
+- `DELETE /v1/auth/connections/:provider` — admin-authenticated disconnect.
+
+The OAuth database migration is `migrations/004_oauth_connections.sql`. It creates short-lived state records and encrypted-token storage. Expired OAuth state is removed when a new authorization starts. Provider refresh tokens are used when the provider supplies them. No paid API service or aggregator is enabled.
